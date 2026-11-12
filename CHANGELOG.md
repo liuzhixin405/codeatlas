@@ -38,7 +38,7 @@ Marketplace 扩展页「Changelog」标签显示的是 [extension/CHANGELOG.md](
 
 - The UI now follows the VS Code display language (Chinese for zh-cn / zh-tw, English otherwise), including commands, settings, Call Outline, Impact, CodeLens, Call Graph, Module Relations, Project Map, Framework Flow, Entry Flow and AI narrations. The CLI follows the system language; override with `--lang zh|en` or `CODEATLAS_LOCALE`.
 - New commands: `codeatlas mcp` (stdio MCP server with `codeatlas_explore`, `_search`, `_callers`, `_callees`, `_impact`, `_status`), `codeatlas affected` (diff → innermost symbols → affected entries and tests), `codeatlas query … --to …` (call paths), `codeatlas arch --cycles files` (file-level import cycles, exit code 1 when a cycle exists).
-- Extension: disk-watch indexing for edits made outside the editor, stale-result notice, startup reconcile with disk, trail URI handling, image export for the call graph, path view.
+- Extension: disk-watch indexing for edits made outside the editor, stale-result notice, startup reconcile with disk, a “⇢ Path to…” call-path view, shareable trail links (“⇪ Share”), and PNG / SVG export for the Call Graph, Module Relations, Containers, Namespaces, Entry Flow and Framework Flow.
 - **Index format 13**: synthesized TS / JS event-channel edges (`emit('channel')` → `on('channel', handler)`, via `event:channel`, confidence 0.4). Old indexes are rebuilt automatically.
 - Fix: parallel scans no longer share stateful discovery-rule instances.
 - **After upgrading:** nothing is required; old indexes rebuild automatically. Run a full rebuild to switch every stored text to the current language. AI narrations are cached per language.
