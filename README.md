@@ -19,7 +19,7 @@
 
 命令行方式仍然可用，见下面。
 
-完整的安装与使用指南（前提、更新、看懂这张图、工具栏、项目地图、常见问题）见 [docs/vscode-extension-guide.md](docs/vscode-extension-guide.md)。
+第一次用先看 [用户使用说明（快速上手）](docs/vscode-extension-quickstart.md)：按"我想知道什么"组织，从安装到每个视图解决什么问题、卡住了怎么办。逐项细节见 [完整使用指南](docs/vscode-extension-guide.md)（前提、更新、看懂这张图、工具栏、项目地图、常见问题）。
 
 多平台打包、Marketplace 上传和后续升级见 [发布指南](docs/vscode-extension-publishing.md)。
 
@@ -204,7 +204,7 @@ git diff -U0 origin/main | codeatlas affected D:\code\shop-api --stdin
 - 类型推断有边界：调用返回的泛型 `T`、lambda 参数、元组解构、Go 的多返回值第二个起、Python 未注解的参数推不出来，这些调用按名字近似解析（置信度 0.7 / 0.3）。
 - 列号按 UTF-8 字节算，含中文的行会偏。
 
-更完整的验收数据和已知问题见 [docs/acceptance.md](docs/acceptance.md)。
+更完整的验收数据和已知问题见 [docs/acceptance.md](docs/acceptance.md)；每个版本改了什么、升级后要做什么见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 开发
 
@@ -228,6 +228,7 @@ tests/                             每个项目一个测试项目，fixtures 是
 docs/superpowers/specs             设计文档
 docs/superpowers/plans             实施计划（里程碑 1 已完成）
 docs/acceptance.md                 真实仓库验收记录
+CHANGELOG.md                       版本更新日志（含命令行与扩展）
 ```
 
 加一种语言：在 `Queries/` 下写 `<lang>.definitions.scm` 和 `<lang>.references.scm`，在 `Adapters/` 下写一个几十行的子类，在 `tests/.../Fixtures/<lang>/` 放一个小源文件写快照测试。约定见 `LanguageAdapterBase` 的注释。

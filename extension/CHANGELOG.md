@@ -5,14 +5,18 @@ Each release lists **what changed** and **what you need to do after upgrading** 
 
 ## 0.2.0 — 2026-11-12
 
-### 新功能：界面语言跟随 VS Code
+### 新功能
 
-- VS Code 显示语言是中文（简体或繁体）时界面显示中文，其他语言一律显示英文。
-- 覆盖范围：
-  - 命令、设置说明、侧边栏的调用大纲和影响范围、CodeLens；
-  - 调用图、模块关系、项目地图、框架流程、入口流程；
-  - AI 叙述。
-- 切换语言：命令面板运行 **Configure Display Language**（配置显示语言），选好后重启 VS Code。
+- **界面语言跟随 VS Code**：显示语言是中文（简体或繁体）时界面显示中文，其他语言一律显示英文。
+  - 覆盖范围：
+    - 命令、设置说明、侧边栏的调用大纲和影响范围、CodeLens；
+    - 调用图、模块关系、项目地图、框架流程、入口流程；
+    - AI 叙述。
+  - 切换语言：命令面板运行 **Configure Display Language**（配置显示语言），选好后重启 VS Code。
+- **⇢ 路径到…**：调用图里求从当前焦点到另一个符号的调用路径（含分派边），最短的在前。
+- **导出图片**：调用图、模块关系、容器图、命名空间、入口流程、框架流程可导出 PNG / SVG。
+- **⇪ 分享**：把浏览路径（调用图、模块关系、调用路径的步骤）复制成链接，同事打开同一个仓库后点链接即可重放。
+- **编辑器之外的改动也会索引**：AI 助手直接写盘、`git pull`、切分支后由磁盘监听防抖后增量索引（`codeatlas.indexOnExternalChange`）；服务启动时与磁盘对账；视图涉及的文件在索引后改过时提示结果可能过期。
 
 ### 升级后需要做什么
 
@@ -37,6 +41,10 @@ Each release lists **what changed** and **what you need to do after upgrading** 
   - Chinese (Simplified or Traditional) shows Chinese; every other language shows English.
   - Covers commands, settings, the Call Outline and Impact views, CodeLens, the Call Graph, Module Relations, Project Map, Framework Flow, Entry Flow, and AI narrations.
   - To switch: run **Configure Display Language** from the Command Palette, then restart VS Code.
+- **⇢ Path to…**: find the call paths from the current focus to another symbol in the Call Graph (dispatch edges included, shortest first).
+- **Image export**: export the Call Graph, Module Relations, Containers, Namespaces, Entry Flow and Framework Flow as PNG / SVG.
+- **⇪ Share**: copy the current trail (Call Graph, Module Relations and call-path steps) as a link; a colleague who opens the same repository and clicks it replays the same trail.
+- **Edits made outside the editor are indexed too**: after an AI assistant writes files directly, `git pull` or a branch switch, the disk watcher re-indexes incrementally (`codeatlas.indexOnExternalChange`). The server also reconciles with disk at startup, and views warn when a file they show has changed since indexing.
 - **After upgrading:**
   - Nothing is required. Your existing index keeps working. The next index run (saving a file, or *Index Workspace (Incremental)*) regenerates the project map and framework flows in the current language.
   - To switch every text at once, run **CodeTrail Graph: Index Workspace (Full Rebuild)**. A few texts stored in the index, such as the C# top-level statements signature, only update on a full rebuild.

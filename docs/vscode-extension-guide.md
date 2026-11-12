@@ -1,6 +1,6 @@
 # CodeTrail Graph for VS Code 安装与使用指南
 
-适用版本：扩展 **0.2.0**，索引格式 **13**（0.1.1 发布时为 12）。本文只讲 VS Code 扩展；命令行用法见仓库根目录的 [README](../README.md)。市场品牌为 CodeTrail Graph，后端仍叫 CodeAtlas；内部 `codeatlas.*` 命令 / 设置和 `.codeatlas` 目录保持兼容。发布流程见 [发布指南](vscode-extension-publishing.md)。
+适用版本：扩展 **0.2.0**，索引格式 **13**（0.1.1 发布时为 12）。第一次用建议先看 [快速上手](vscode-extension-quickstart.md)（按"我想知道什么"组织）；本文是逐项细节。本文只讲 VS Code 扩展；命令行用法见仓库根目录的 [README](../README.md)。市场品牌为 CodeTrail Graph，后端仍叫 CodeAtlas；内部 `codeatlas.*` 命令 / 设置和 `.codeatlas` 目录保持兼容。发布流程见 [发布指南](vscode-extension-publishing.md)。
 
 ---
 

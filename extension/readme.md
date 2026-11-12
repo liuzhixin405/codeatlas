@@ -9,7 +9,7 @@
 
 基于 [CodeAtlas](https://github.com/liuzhixin405/CodeAtlas) 后端。市场品牌是 **CodeTrail Graph**，内部 `codeatlas.*` 命令 / 设置和 `.codeatlas` 索引目录不变。
 
-[完整指南](https://github.com/liuzhixin405/CodeAtlas/blob/main/docs/vscode-extension-guide.md) · [发布指南](https://github.com/liuzhixin405/CodeAtlas/blob/main/docs/vscode-extension-publishing.md)
+[快速上手（按使用场景）](https://github.com/liuzhixin405/CodeAtlas/blob/main/docs/vscode-extension-quickstart.md) · [完整指南](https://github.com/liuzhixin405/CodeAtlas/blob/main/docs/vscode-extension-guide.md) · [发布指南](https://github.com/liuzhixin405/CodeAtlas/blob/main/docs/vscode-extension-publishing.md)
 
 ## 0.2.0 更新
 
