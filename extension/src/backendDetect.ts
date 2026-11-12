@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import { L, listSep } from "../webview/l10n";
 
 /**
  * 单独打开一个前端仓库时，自动发现旁边的 .NET 后端并提示「一起索引」。
@@ -181,12 +182,17 @@ export async function detectBackendsToSuggest(fs: DetectFs, primary: string, ctx
 
 /** 单个候选的提示文字。 */
 export function suggestionMessage(c: BackendCandidate): string {
-  return `检测到旁边的 .NET 后端 ${c.name}（${c.sln}）。一起索引后，项目地图能显示前端页面到后端控制器的完整调用链。是否一起索引？`;
+  return L(
+    `检测到旁边的 .NET 后端 ${c.name}（${c.sln}）。一起索引后，项目地图能显示前端页面到后端控制器的完整调用链。是否一起索引？`,
+    `Found a .NET backend nearby: ${c.name} (${c.sln}). Indexing it together lets the Project Map show full call chains from frontend pages to backend controllers. Index it together?`);
 }
 
 /** 多个候选时的提示文字（点「一起索引」后再用 QuickPick 选一个）。 */
 export function multiSuggestionMessage(cs: readonly BackendCandidate[]): string {
-  return `检测到旁边有 ${cs.length} 个 .NET 后端（${cs.map((c) => c.name).join("、")}）。一起索引后，项目地图能显示前端页面到后端控制器的完整调用链。是否一起索引？`;
+  const names = cs.map((c) => c.name).join(listSep());
+  return L(
+    `检测到旁边有 ${cs.length} 个 .NET 后端（${names}）。一起索引后，项目地图能显示前端页面到后端控制器的完整调用链。是否一起索引？`,
+    `Found ${cs.length} .NET ${cs.length === 1 ? "backend" : "backends"} nearby (${names}). Indexing one together lets the Project Map show full call chains from frontend pages to backend controllers. Index together?`);
 }
 
 /** 选定后写回的 codeatlas.projects：原值后面追加，已有（同写法）不重复加。 */

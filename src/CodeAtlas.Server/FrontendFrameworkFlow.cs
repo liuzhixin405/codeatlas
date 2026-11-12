@@ -33,13 +33,22 @@ public static partial class FrontendFrameworkFlow
 
     private const int MaxExpandLevel = 2;
 
+    /// <summary>"没认出请求封装" 那条 Note 的开头：产生处与去重判断共用，两种语言都对得上。</summary>
+    private static string NoRequestWrapperPrefix => L("没认出请求封装", "Request wrapper not recognized");
+
+    /// <summary>出错处理的动作"再抛给调用方"：DescribeErrors 产生、ExpandOnce 判断共用。</summary>
+    private static string RethrowAction => L("再抛给调用方", "rethrow to the caller");
+
+    /// <summary>TanStack Query 全局 onError 的触发说明：产生处与合并 Query / Mutation 时的替换共用。</summary>
+    private static string QueryErrorTrigger => L("查询出错时", "on query error");
+
     public static FrameworkFlowDto Build(FrameworkInput input)
     {
         try { return new Run(input).Build(); }
         catch (Exception e) when (e is IndexOutOfRangeException or ArgumentOutOfRangeException or ArgumentException or RegexMatchTimeoutException)
         {
             // 文本扫描遇到没料到的写法时不拖垮整个视图：给一句说明（带异常类型，方便回报）
-            return Empty(input.Container, [$"前端框架流程分析源码时出错（{e.GetType().Name}：{e.Message}），这个容器先不画"]);
+            return Empty(input.Container, [L($"前端框架流程分析源码时出错（{e.GetType().Name}：{e.Message}），这个容器先不画", $"Frontend framework flow failed while analyzing source ({e.GetType().Name}: {e.Message}); this container is not drawn for now")]);
         }
     }
 
@@ -160,8 +169,8 @@ public static partial class FrontendFrameworkFlow
                 var other = deps.ContainsKey("vue") || deps.ContainsKey("nuxt") ? "Vue" : deps.ContainsKey("@angular/core") ? "Angular"
                     : deps.ContainsKey("svelte") ? "Svelte" : deps.ContainsKey("solid-js") ? "Solid" : null;
                 return Empty(container, [other is null
-                    ? "没认出前端框架：package.json 里没有 react / next（或没找到 package.json），也没有 react-dom 的挂载调用"
-                    : $"{other} 的框架流程还不认（package.json 里有 {other.ToLowerInvariant()}）：先只做了 React / Next.js"]);
+                    ? L("没认出前端框架：package.json 里没有 react / next（或没找到 package.json），也没有 react-dom 的挂载调用", "Frontend framework not recognized: package.json has no react / next (or no package.json was found), and there is no react-dom mount call")
+                    : L($"{other} 的框架流程还不认（package.json 里有 {other.ToLowerInvariant()}）：先只做了 React / Next.js", $"{other} framework flow is not supported yet (package.json has {other.ToLowerInvariant()}): only React / Next.js are supported so far")]);
             }
             notes.Add(RecognizedNote());
 
@@ -179,18 +188,18 @@ public static partial class FrontendFrameworkFlow
         {
             var pages = input.Entries.Where(e => e.ContainerKey == container.Key && e.Kind == "page" && !PipelineBuilder.IsTest(e.File, "")).ToList();
             var pageNote = pages.Count > 0
-                ? $"{pages.Count} 个页面入口" + (next ? "（app/**/page.tsx 与 pages/）" : "") + "，点开看清单"
-                : "入口识别没有登记页面（只认 Next.js 的 app/**/page.tsx 与 pages/；SPA 的路由表还不登记成入口），清单是空的";
+                ? L($"{pages.Count} 个页面入口", Plural(pages.Count, "page entry", "page entries")) + (next ? L("（app/**/page.tsx 与 pages/）", " (app/**/page.tsx and pages/)") : "") + L("，点开看清单", "; expand to see the list")
+                : L("入口识别没有登记页面（只认 Next.js 的 app/**/page.tsx 与 pages/；SPA 的路由表还不登记成入口），清单是空的", "Entry discovery registered no pages (it only recognizes Next.js app/**/page.tsx and pages/; SPA route tables are not registered as entries yet), so the list is empty");
             // 收尾的先后：响应拦截（每个请求回来就过）→ TanStack Query 全局 onError → 出错边界（渲染抛错才到）
             static int Rank(string key) => key.StartsWith("resp-", StringComparison.Ordinal) ? 0 : key.StartsWith("qc:", StringComparison.Ordinal) ? 1 : 2;
             var tail = tailIndex.OrderBy(p => Rank(p.Key)).ThenBy(p => p.Value).Select(p => tailRows[p.Value]).ToList();
-            var pageNode = Node(null, "页面", "", "controllers", StageController, pageNote, [.. requestRows, .. tail], null, null, pages.Count);
+            var pageNode = Node(null, L("页面", "Pages"), "", "controllers", StageController, pageNote, [.. requestRows, .. tail], null, null, pages.Count);
             rootKids.Add(pageNode);
-            if (pages.Count == 0) notes.Add("页面：" + pageNote);
-            if (requestRows.Count == 0 && !notes.Any(n => n.StartsWith("没认出请求封装", StringComparison.Ordinal))) notes.Add("没认出请求封装：没有 axios.create / interceptors / 生成的 OpenAPI 客户端，也没有被 3 处以上调用的 fetch 封装函数");
-            if (tailRows.Count == 0) notes.Add("没发现收尾：没有响应拦截器、TanStack Query 全局 onError、出错边界（ErrorBoundary / errorComponent / error.tsx）");
+            if (pages.Count == 0) notes.Add(L("页面：", "Pages: ") + pageNote);
+            if (requestRows.Count == 0 && !notes.Any(n => n.StartsWith(NoRequestWrapperPrefix, StringComparison.Ordinal))) notes.Add(NoRequestWrapperPrefix + L("：没有 axios.create / interceptors / 生成的 OpenAPI 客户端，也没有被 3 处以上调用的 fetch 封装函数", ": no axios.create / interceptors / generated OpenAPI client, and no fetch wrapper called from 3 or more places"));
+            if (tailRows.Count == 0) notes.Add(L("没发现收尾：没有响应拦截器、TanStack Query 全局 onError、出错边界（ErrorBoundary / errorComponent / error.tsx）", "No teardown found: no response interceptor, TanStack Query global onError, or error boundary (ErrorBoundary / errorComponent / error.tsx)"));
 
-            var root = Node(null, "页面加载", "", "entry", rootKids[0].Actor, null, rootKids, null, null);
+            var root = Node(null, L("页面加载", "Page load"), "", "entry", rootKids[0].Actor, null, rootKids, null, null);
 
             var order = new List<string>();
             void Walk(FlowNodeDto n) { if (!order.Contains(n.Actor)) order.Add(n.Actor); foreach (var c in n.Children) Walk(c); }
@@ -203,17 +212,17 @@ public static partial class FrontendFrameworkFlow
                     : stageSymbols.GetValueOrDefault(key) ?? [];
                 stages.Add(new FrameworkStageDto(key, StageLabel(key), orderKnown.GetValueOrDefault(key, true), symbols.DistinctBy(s => s.Id).Select(Dto).ToList()));
             }
-            return FrameworkFlowBuilder.Assemble(container, "页面加载", root, stages, [], notes, StageLabel(root.Actor));
+            return FrameworkFlowBuilder.Assemble(container, L("页面加载", "Page load"), root, stages, [], notes, StageLabel(root.Actor));
         }
 
         private static string StageLabel(string key) => key switch
         {
-            StageMount => "挂载",
+            StageMount => L("挂载", "Mount"),
             StageProvider => "Provider",
-            StageRoute => "路由",
-            StageController => "页面",
-            StageRequest => "请求封装",
-            StageTail => "收尾",
+            StageRoute => L("路由", "Routing"),
+            StageController => L("页面", "Pages"),
+            StageRequest => L("请求封装", "Request wrapper"),
+            StageTail => L("收尾", "Teardown"),
             _ => key,
         };
 
@@ -331,7 +340,7 @@ public static partial class FrontendFrameworkFlow
         /// </summary>
         private List<FlowNodeDto> ExpandOnce(List<FlowNodeDto> rows, string stage) =>
             rows.Select(r => r.Children.Count == 0 && r.SymbolId is { } id && inside.Contains(id) && byId.TryGetValue(id, out var t) && t.Kind is SymbolKind.Function or SymbolKind.Method
-                             && File(t.Path) is { } tf && DescribeErrors(ReachableTexts(tf, tf.Span(t.StartLine, t.EndLine).Start, tf.Span(t.StartLine, t.EndLine).End, 1)) is { } d && d != "再抛给调用方"
+                             && File(t.Path) is { } tf && DescribeErrors(ReachableTexts(tf, tf.Span(t.StartLine, t.EndLine).Start, tf.Span(t.StartLine, t.EndLine).End, 1)) is { } d && d != RethrowAction
                 ? r with { Children = Cap(CallRows(t, stage), stage) } : r).ToList();
 
         /// <summary>函数（或一段源码）以及它往下两层内调到的同仓库函数的原文：认出错处理的状态码与动作用。</summary>
@@ -440,11 +449,11 @@ public static partial class FrontendFrameworkFlow
         private string RecognizedNote()
         {
             var parts = new List<string>();
-            if (deps.TryGetValue("react", out var rv) && Regex.Match(rv, @"\d+") is { Success: true } major) parts.Add($"React {major.Value}（react {rv}）");
+            if (deps.TryGetValue("react", out var rv) && Regex.Match(rv, @"\d+") is { Success: true } major) parts.Add(L($"React {major.Value}（react {rv}）", $"React {major.Value} (react {rv})"));
             else if (deps.ContainsKey("react")) parts.Add("React");
             foreach (var (dep, name) in KnownLibraries)
                 if (deps.ContainsKey(dep) && !parts.Contains(name)) parts.Add(name);
-            return parts.Count == 0 ? "没读到 package.json 的依赖：只按源码认" : $"认出：{string.Join("、", parts)}（package.json）";
+            return parts.Count == 0 ? L("没读到 package.json 的依赖：只按源码认", "No package.json dependencies read: recognized from source only") : L($"认出：{string.Join("、", parts)}（package.json）", $"Recognized: {string.Join(", ", parts)} (package.json)");
         }
 
         private string ReactVersion() => deps.TryGetValue("react", out var v) && Regex.Match(v, @"\d+") is { Success: true } m ? " " + m.Value : "";
@@ -467,32 +476,32 @@ public static partial class FrontendFrameworkFlow
         {
             var mount = FindMount();
             if (mount is null)
-                notes.Add("没找到挂载点：入口文件（main.tsx / index.tsx…）里没有 createRoot(...).render / hydrateRoot / ReactDOM.render");
+                notes.Add(L("没找到挂载点：入口文件（main.tsx / index.tsx…）里没有 createRoot(...).render / hydrateRoot / ReactDOM.render", "No mount point found: the entry file (main.tsx / index.tsx…) has no createRoot(...).render / hydrateRoot / ReactDOM.render"));
             else
             {
                 var (f, mountPos, label, api, jsxAt) = mount.Value;
                 var kids = PreMountRows(f, StatementStart(f.S, mountPos));
                 var target = MountTargetOf(f, mountPos);
-                kids.Add(Node(null, label, "external:react-dom." + api, "external-group", StageMount, "挂载：从这里开始渲染下面的 Provider 树", [], f.Path, f.LineOf(mountPos)));
+                kids.Add(Node(null, label, "external:react-dom." + api, "external-group", StageMount, L("挂载：从这里开始渲染下面的 Provider 树", "Mount: rendering of the Provider tree below starts here"), [], f.Path, f.LineOf(mountPos)));
                 var module = modulesByPath.GetValueOrDefault(f.Path);
                 var apiNote = api switch
                 {
-                    "createRoot" => "createRoot（React 18+）",
-                    "hydrateRoot" => "hydrateRoot（服务端渲染后水合）",
-                    _ => $"ReactDOM.{api}（React 17 及以前的旧 API）",
+                    "createRoot" => L("createRoot（React 18+）", "createRoot (React 18+)"),
+                    "hydrateRoot" => L("hydrateRoot（服务端渲染后水合）", "hydrateRoot (hydration after server rendering)"),
+                    _ => L($"ReactDOM.{api}（React 17 及以前的旧 API）", $"ReactDOM.{api} (legacy API, React 17 and earlier)"),
                 };
-                mountRows.Add(Row(StageMount, module, FileName(f.Path), $"应用入口：React{ReactVersion()} {apiNote}（{Where(f, mountPos)}）" + (target is null ? "" : $"挂到 {target}"), kids, f.Path, module is null ? null : 1));
+                mountRows.Add(Row(StageMount, module, FileName(f.Path), L($"应用入口：React{ReactVersion()} {apiNote}（{Where(f, mountPos)}）", $"App entry: React{ReactVersion()} {apiNote} ({Where(f, mountPos)})") + (target is null ? "" : L($"挂到 {target}", $", mounted on {target}")), kids, f.Path, module is null ? null : 1));
 
                 if (jsxAt >= 0 && ParseJsx(f.S, jsxAt) is { } jsx)
                 {
                     providerSource = FileName(f.Path);
                     Visit(f, jsx, true, 0, null, false);
                 }
-                else notes.Add($"挂载调用（{Where(f, mountPos)}）的参数里没解析出 JSX");
+                else notes.Add(L($"挂载调用（{Where(f, mountPos)}）的参数里没解析出 JSX", $"No JSX parsed from the mount call arguments ({Where(f, mountPos)})"));
             }
             if (providerRows.Count > 0)
-                notes.Add($"Provider 顺序 = {providerSource} 里挂载的 JSX 由外到内的嵌套；仓库里的包装组件进去接着找（最多 {MaxExpandLevel} 层），里面的标「经 X」");
-            else if (mount is not null) notes.Add("挂载的 JSX 里没有包住页面的 Provider");
+                notes.Add(L($"Provider 顺序 = {providerSource} 里挂载的 JSX 由外到内的嵌套；仓库里的包装组件进去接着找（最多 {MaxExpandLevel} 层），里面的标「经 X」", $"Provider order = nesting of the JSX mounted in {providerSource}, outer to inner; repo wrapper components are expanded (up to {MaxExpandLevel} levels), and providers found inside them are marked \"via X\""));
+            else if (mount is not null) notes.Add(L("挂载的 JSX 里没有包住页面的 Provider", "The mounted JSX has no Provider wrapping the pages"));
 
             BuildRoutes();
             rootKids.AddRange(mountRows);
@@ -573,7 +582,7 @@ public static partial class FrontendFrameworkFlow
             {
                 if (m.Index >= before || f.StringAt(m.Groups["q"].Index) is not { } spec || StyleImport().IsMatch(spec)) continue;
                 var module = ResolveModule(f.Path, spec);
-                rows.Add((m.Index, Row(StageMount, module, $"import \"{spec}\"", "副作用导入：模块加载时就执行（i18n 初始化、polyfill、全局配置……）", [], f.Path, f.LineOf(m.Index), module is null ? "external:" + spec : null)));
+                rows.Add((m.Index, Row(StageMount, module, $"import \"{spec}\"", L("副作用导入：模块加载时就执行（i18n 初始化、polyfill、全局配置……）", "Side-effect import: runs when the module loads (i18n init, polyfills, global config…)"), [], f.Path, f.LineOf(m.Index), module is null ? "external:" + spec : null)));
             }
             foreach (var tc in TopLevelCalls(f.S, 0, before))
             {
@@ -584,7 +593,7 @@ public static partial class FrontendFrameworkFlow
                     ? (callsFrom.GetValueOrDefault(module.Id) ?? []).Where(e => e.Line == line).Select(e => byId.GetValueOrDefault(e.ToId)).FirstOrDefault(t => t is not null && t.Name == name)
                     : null;
                 var note = TopCallNote(f, tc);
-                if (name == "setConfig" || tc.Callee.StartsWith("OpenAPI", StringComparison.Ordinal)) clientConfigSites.Add($"{Where(f, tc.Pos)} {tc.Callee}（{ObjectKeys(f, tc.ArgStart, tc.ArgEnd) ?? "…"}）");
+                if (name == "setConfig" || tc.Callee.StartsWith("OpenAPI", StringComparison.Ordinal)) clientConfigSites.Add(L($"{Where(f, tc.Pos)} {tc.Callee}（{ObjectKeys(f, tc.ArgStart, tc.ArgEnd) ?? "…"}）", $"{Where(f, tc.Pos)} {tc.Callee} ({ObjectKeys(f, tc.ArgStart, tc.ArgEnd) ?? "…"})"));
                 var repo = target is not null && target.Kind != SymbolKind.External && inside.Contains(target.Id);
                 rows.Add((tc.Pos, Row(StageMount, repo ? target : null, tc.Callee, note, repo && target!.Kind is SymbolKind.Function or SymbolKind.Method ? CallRows(target, StageMount) : [],
                     f.Path, line, repo ? null : target?.QualifiedName ?? tc.Callee)));
@@ -595,7 +604,7 @@ public static partial class FrontendFrameworkFlow
                 var lhs = Regex.Replace(m.Groups["lhs"].Value, @"\s+", "");
                 clientConfigSites.Add($"{Where(f, m.Index)} {lhs}");
                 rows.Add((m.Index, Node(null, lhs + " = …", lhs, "external-group", StageMount,
-                    lhs.StartsWith("OpenAPI", StringComparison.Ordinal) ? "生成的 OpenAPI 客户端全局配置：之后每个请求都带上" : "axios 全局默认值：之后每个请求都带上", [], f.Path, f.LineOf(m.Index))));
+                    lhs.StartsWith("OpenAPI", StringComparison.Ordinal) ? L("生成的 OpenAPI 客户端全局配置：之后每个请求都带上", "Generated OpenAPI client global config: applied to every later request") : L("axios 全局默认值：之后每个请求都带上", "axios global defaults: applied to every later request"), [], f.Path, f.LineOf(m.Index))));
             }
             return rows.OrderBy(r => r.Pos).Select(r => r.Node).ToList();
         }
@@ -605,19 +614,19 @@ public static partial class FrontendFrameworkFlow
             var name = tc.Callee.Replace("new ", "").Split('.')[^1];
             var what = name switch
             {
-                "setConfig" => "请求客户端全局配置",
-                "QueryClient" => "TanStack Query 客户端",
-                "createRouter" => "TanStack Router 路由实例",
-                "createBrowserRouter" or "createHashRouter" or "createMemoryRouter" => "React Router 路由表",
-                "init" when Regex.IsMatch(tc.Callee, "i18n", RegexOptions.IgnoreCase) => "i18n 初始化",
-                "init" => "初始化",
+                "setConfig" => L("请求客户端全局配置", "Request client global config"),
+                "QueryClient" => L("TanStack Query 客户端", "TanStack Query client"),
+                "createRouter" => L("TanStack Router 路由实例", "TanStack Router instance"),
+                "createBrowserRouter" or "createHashRouter" or "createMemoryRouter" => L("React Router 路由表", "React Router route table"),
+                "init" when Regex.IsMatch(tc.Callee, "i18n", RegexOptions.IgnoreCase) => L("i18n 初始化", "i18n init"),
+                "init" => L("初始化", "Initialization"),
                 "configureStore" or "createStore" => "Redux store",
-                "start" when tc.Callee.Contains("worker", StringComparison.Ordinal) => "MSW 模拟接口",
+                "start" when tc.Callee.Contains("worker", StringComparison.Ordinal) => L("MSW 模拟接口", "MSW mock API"),
                 _ => null,
             };
             var keys = ObjectKeys(f, tc.ArgStart, tc.ArgEnd);
-            var parts = new List<string?> { what, tc.AssignedTo is null ? null : $"{tc.AssignedTo} = …", keys is null ? null : "配置：" + keys, "挂载前执行" };
-            return string.Join("；", parts.Where(p => p is not null));
+            var parts = new List<string?> { what, tc.AssignedTo is null ? null : $"{tc.AssignedTo} = …", keys is null ? null : L("配置：", "config: ") + keys, L("挂载前执行", "runs before mount") };
+            return string.Join(L("；", "; "), parts.Where(p => p is not null));
         }
 
         /// <summary>实参是对象字面量时的顶层键（baseURL、auth）。</summary>
@@ -628,7 +637,7 @@ public static partial class FrontendFrameworkFlow
             var close = MatchAny(f.S, open);
             if (close < 0) return null;
             var keys = ObjectEntries(f.S, open, close).Select(e => e.Key).ToList();
-            return keys.Count == 0 ? null : string.Join("、", keys.Take(8)) + (keys.Count > 8 ? "…" : "");
+            return keys.Count == 0 ? null : string.Join(ListSep, keys.Take(8)) + (keys.Count > 8 ? "…" : "");
         }
 
         // ---- Provider 树 ----
@@ -657,7 +666,7 @@ public static partial class FrontendFrameworkFlow
                 if (RouterWrappers.Contains(name))
                 {
                     routeTags.Add((f, el));
-                    routeRows.Add(Row(StageRoute, null, name, $"React Router 路由容器（{Where(f, el.Pos)}）：提供 history 与路由上下文" + (via is null ? "" : $"；经 {via}"), [], f.Path, f.LineOf(el.Pos), ExternalQn(f, name)));
+                    routeRows.Add(Row(StageRoute, null, name, L($"React Router 路由容器（{Where(f, el.Pos)}）：提供 history 与路由上下文", $"React Router router ({Where(f, el.Pos)}): provides history and routing context") + (via is null ? "" : L($"；经 {via}", $"; via {via}")), [], f.Path, f.LineOf(el.Pos), ExternalQn(f, name)));
                     VisitChildren(f, el, level, via, ownImpl);
                     return;
                 }
@@ -679,7 +688,7 @@ public static partial class FrontendFrameworkFlow
             }
             if (sym is not null && WouldExpand(f, el, sole, level) && expanded.Add(sym.Id))
             {
-                AddProvider(f, el, sym, level, via, [], "根组件");
+                AddProvider(f, el, sym, level, via, [], L("根组件", "Root component"));
                 Expand(sym, level + 1, name, false);
             }
         }
@@ -724,9 +733,9 @@ public static partial class FrontendFrameworkFlow
             foreach (var a in new[] { "client", "store", "router", "theme", "session", "messages", "value", "i18n", "config" })
                 if (Attr(f, el, a) is { } v && v.Text.Length > 0) parts.Add($"{a} = {Short(v.Text)}");
             if (lib is not null) parts.Add(lib);
-            if (via is not null) parts.Add($"经 {via}");
+            if (via is not null) parts.Add(L($"经 {via}", $"via {via}"));
             parts.Add(Where(f, el.Pos));
-            if (siblings.Count > 0) parts.Add($"里面还挂着 {string.Join("、", siblings.Take(5))}（不包页面的全局组件，没画）");
+            if (siblings.Count > 0) parts.Add(L($"里面还挂着 {string.Join("、", siblings.Take(5))}（不包页面的全局组件，没画）", $"also mounts {string.Join(", ", siblings.Take(5))} inside (global components that don't wrap pages; not drawn)"));
             var kids = new List<FlowNodeDto>();
             if (name == "QueryClientProvider") kids.AddRange(QueryClientRows(f, el));
             if (repo && sym!.Kind is SymbolKind.Function or SymbolKind.Method)
@@ -735,19 +744,19 @@ public static partial class FrontendFrameworkFlow
                 kids.AddRange(CallRows(sym, StageProvider, own));
             }
             if (IsErrorBoundary(name))
-                AddTail("eb:" + f.Path + ":" + el.Pos, Row(StageTail, repo ? sym : null, name, $"渲染出错时：{name}（{Where(f, el.Pos)}）显示兜底界面", [], f.Path, f.LineOf(el.Pos), repo ? null : ExternalQn(f, name)));
+                AddTail("eb:" + f.Path + ":" + el.Pos, Row(StageTail, repo ? sym : null, name, L($"渲染出错时：{name}（{Where(f, el.Pos)}）显示兜底界面", $"On render error: {name} ({Where(f, el.Pos)}) shows a fallback UI"), [], f.Path, f.LineOf(el.Pos), repo ? null : ExternalQn(f, name)));
             // 仓库里的组件、名字不像 Provider、自己也不渲染 Provider / Context：不是 Provider——会跳转的是守卫（路由列），其余是布局容器（挂载列）
             var stage = StageProvider;
             if (repo && role is null && !ProviderLike().IsMatch(name) && sym!.Kind is SymbolKind.Function or SymbolKind.Method or SymbolKind.Class && !RendersProvider(sym))
             {
                 var guard = File(sym.Path) is { } sf && sf.Span(sym.StartLine, sym.EndLine) is var (gs, ge)
-                    ? GuardNote(sf, gs, ge) ?? (NavigateCall().Match(sf.Raw, gs, Math.Max(0, Math.Min(sf.Raw.Length, ge) - gs)) is { Success: true } nm ? $"守卫 / 跳转：条件不满足时 {Regex.Replace(nm.Value, @"\s+", "")}…（{Where(sf, nm.Index)}），否则渲染子树" : null)
+                    ? GuardNote(sf, gs, ge) ?? (NavigateCall().Match(sf.Raw, gs, Math.Max(0, Math.Min(sf.Raw.Length, ge) - gs)) is { Success: true } nm ? L($"守卫 / 跳转：条件不满足时 {Regex.Replace(nm.Value, @"\s+", "")}…（{Where(sf, nm.Index)}），否则渲染子树", $"Guard / redirect: {Regex.Replace(nm.Value, @"\s+", "")}… when the condition fails ({Where(sf, nm.Index)}), otherwise renders the subtree") : null)
                     : null;
-                if (guard is not null || GuardName().IsMatch(name)) { stage = StageRoute; parts.Insert(0, (guard ?? "守卫组件") + "（不是 Provider：不渲染 Context.Provider）"); }
-                else { stage = StageMount; parts.Insert(0, "布局容器（不是 Provider：不渲染 Context.Provider）"); }
+                if (guard is not null || GuardName().IsMatch(name)) { stage = StageRoute; parts.Insert(0, (guard ?? L("守卫组件", "Guard component")) + L("（不是 Provider：不渲染 Context.Provider）", " (not a Provider: renders no Context.Provider)")); }
+                else { stage = StageMount; parts.Insert(0, L("布局容器（不是 Provider：不渲染 Context.Provider）", "Layout container (not a Provider: renders no Context.Provider)")); }
                 kids = kids.Select(k => k with { Actor = k.Actor == StageProvider ? stage : k.Actor }).ToList();
             }
-            providerRows.Add(Row(stage, repo ? sym : null, name, string.Join("；", parts.Where(p => !string.IsNullOrEmpty(p))), kids, f.Path, f.LineOf(el.Pos), repo ? null : ExternalQn(f, name)));
+            providerRows.Add(Row(stage, repo ? sym : null, name, string.Join(L("；", "; "), parts.Where(p => !string.IsNullOrEmpty(p))), kids, f.Path, f.LineOf(el.Pos), repo ? null : ExternalQn(f, name)));
         }
 
         /// <summary>组件返回的 JSX 里有没有 Provider 一类的标签（X.Provider、*Provider、*Context）——真 Provider 自己会渲染一个。</summary>
@@ -764,23 +773,23 @@ public static partial class FrontendFrameworkFlow
         /// <summary>常见 Provider 的说明（名字 + 来自的库）。</summary>
         private static string? Describe(string name, string? lib, List<string> attrs) => name switch
         {
-            "StrictMode" or "React.StrictMode" => "React 严格模式（只在开发期生效：组件渲染两次、检查过时 API）",
-            "Suspense" or "React.Suspense" => "Suspense：懒加载 / 数据没就绪时先显示 fallback",
-            "QueryClientProvider" => "TanStack Query：提供查询缓存",
-            "Provider" when lib?.Contains("redux", StringComparison.Ordinal) == true || attrs.Contains("store") => "Redux：提供 store",
-            "Provider" when lib == "jotai" => "Jotai：原子状态的 store",
-            "ThemeProvider" or "MantineProvider" or "ChakraProvider" or "CssVarsProvider" => "主题",
-            "ConfigProvider" => "组件库全局配置",
-            "I18nextProvider" or "IntlProvider" or "NextIntlClientProvider" => "国际化（文案 / 语言）",
-            "SessionProvider" => "登录会话",
-            "SnackbarProvider" or "ToastProvider" or "NotificationsProvider" => "消息提示",
-            "HelmetProvider" => "页面 head 管理",
-            "LocalizationProvider" => "日期组件本地化",
-            "AppRouterCacheProvider" => "MUI 样式缓存（Next App Router）",
-            "ApolloProvider" => "Apollo GraphQL 客户端",
-            "NuqsAdapter" => "URL 查询参数状态（nuqs）",
-            _ when IsErrorBoundary(name) => "出错边界：子树渲染抛错时显示兜底界面（见收尾）",
-            _ when name.EndsWith(".Provider", StringComparison.Ordinal) => "Context 提供值",
+            "StrictMode" or "React.StrictMode" => L("React 严格模式（只在开发期生效：组件渲染两次、检查过时 API）", "React strict mode (development only: renders components twice, checks deprecated APIs)"),
+            "Suspense" or "React.Suspense" => L("Suspense：懒加载 / 数据没就绪时先显示 fallback", "Suspense: shows the fallback while lazy code / data is not ready"),
+            "QueryClientProvider" => L("TanStack Query：提供查询缓存", "TanStack Query: provides the query cache"),
+            "Provider" when lib?.Contains("redux", StringComparison.Ordinal) == true || attrs.Contains("store") => L("Redux：提供 store", "Redux: provides the store"),
+            "Provider" when lib == "jotai" => L("Jotai：原子状态的 store", "Jotai: atom state store"),
+            "ThemeProvider" or "MantineProvider" or "ChakraProvider" or "CssVarsProvider" => L("主题", "Theme"),
+            "ConfigProvider" => L("组件库全局配置", "Component library global config"),
+            "I18nextProvider" or "IntlProvider" or "NextIntlClientProvider" => L("国际化（文案 / 语言）", "Internationalization (messages / locale)"),
+            "SessionProvider" => L("登录会话", "Login session"),
+            "SnackbarProvider" or "ToastProvider" or "NotificationsProvider" => L("消息提示", "Notifications"),
+            "HelmetProvider" => L("页面 head 管理", "Page head management"),
+            "LocalizationProvider" => L("日期组件本地化", "Date picker localization"),
+            "AppRouterCacheProvider" => L("MUI 样式缓存（Next App Router）", "MUI style cache (Next App Router)"),
+            "ApolloProvider" => L("Apollo GraphQL 客户端", "Apollo GraphQL client"),
+            "NuqsAdapter" => L("URL 查询参数状态（nuqs）", "URL query-param state (nuqs)"),
+            _ when IsErrorBoundary(name) => L("出错边界：子树渲染抛错时显示兜底界面（见收尾）", "Error boundary: shows a fallback UI when the subtree throws while rendering (see teardown)"),
+            _ when name.EndsWith(".Provider", StringComparison.Ordinal) => L("Context 提供值", "Provides a Context value"),
             _ => null,
         };
 
@@ -795,16 +804,16 @@ public static partial class FrontendFrameworkFlow
                 if (module is null || File(module.Path) is not { } f) continue;
                 var fn = childrenOf[module.Id].FirstOrDefault(s => s.Kind == SymbolKind.Function && (s.Visibility == "export default" || s.Visibility == "export" && s.Name is "middleware" or "proxy"));
                 var matcher = Regex.Match(f.Raw, @"matcher\s*:\s*(?<m>\[[^\]]*\]|[""'][^""']*[""'])");
-                var parts = new List<string> { $"Next 中间件（{FileName(f.Path)}）：每个请求先在服务端过它，再渲染布局" };
+                var parts = new List<string> { L($"Next 中间件（{FileName(f.Path)}）：每个请求先在服务端过它，再渲染布局", $"Next middleware ({FileName(f.Path)}): every request passes through it on the server before layouts render") };
                 if (matcher.Success) parts.Add("matcher = " + Short(Regex.Replace(matcher.Groups["m"].Value, @"//[^\n]*|/\*[\s\S]*?\*/", " "), 60));
                 if (fn is not null)
                 {
                     var (s, e) = f.Span(fn.StartLine, fn.EndLine);
                     if (GuardNote(f, s, e) is { } g) parts.Add(g);
                 }
-                else if (Regex.Match(f.S, @"export\s+default\s+(?<fn>[A-Za-z_$][\w$]*)\s*\(") is { Success: true } wrapped) parts.Add($"默认导出 {wrapped.Groups["fn"].Value}(…) 包出来的中间件");
-                routeRows.Add(Row(StageRoute, fn ?? module, fn is null ? FileName(f.Path) : $"{fn.Name}（{FileName(f.Path)}）", string.Join("；", parts), fn is null ? [] : CallRows(fn, StageRoute), f.Path, fn?.StartLine ?? 1));
-                notes.Add($"路由：Next.js 中间件 {Rel(f.Path)} 排在最前（服务端，渲染布局之前执行）");
+                else if (Regex.Match(f.S, @"export\s+default\s+(?<fn>[A-Za-z_$][\w$]*)\s*\(") is { Success: true } wrapped) parts.Add(L($"默认导出 {wrapped.Groups["fn"].Value}(…) 包出来的中间件", $"middleware wrapped by the default export {wrapped.Groups["fn"].Value}(…)"));
+                routeRows.Add(Row(StageRoute, fn ?? module, fn is null ? FileName(f.Path) : L($"{fn.Name}（{FileName(f.Path)}）", $"{fn.Name} ({FileName(f.Path)})"), string.Join(L("；", "; "), parts), fn is null ? [] : CallRows(fn, StageRoute), f.Path, fn?.StartLine ?? 1));
+                notes.Add(L($"路由：Next.js 中间件 {Rel(f.Path)} 排在最前（服务端，渲染布局之前执行）", $"Routing: Next.js middleware {Rel(f.Path)} comes first (server side, runs before layouts render)"));
                 break;
             }
 
@@ -820,8 +829,8 @@ public static partial class FrontendFrameworkFlow
                 layoutChain = layouts.Where(m => dirOf[m.Id] == appRoot || pages.Count > 0 && cover[m.Id] * 2 >= pages.Count)
                     .OrderBy(m => dirOf[m.Id].Count(c => c == '/')).ToList();
                 var others = layouts.Count - layoutChain.Count;
-                notes.Add($"挂载：Next.js App Router 没有 createRoot，框架按 {Rel(appRoot)}/ 下的 layout 由外到内渲染；画了包住至少一半页面的 {layoutChain.Count} 层布局"
-                          + (others > 0 ? $"（另有 {others} 个局部布局只包少数页面，没画）" : ""));
+                notes.Add(L($"挂载：Next.js App Router 没有 createRoot，框架按 {Rel(appRoot)}/ 下的 layout 由外到内渲染；画了包住至少一半页面的 {layoutChain.Count} 层布局", $"Mount: Next.js App Router has no createRoot; the framework renders the layouts under {Rel(appRoot)}/ outer to inner; drew {Plural(layoutChain.Count, "layout", "layouts")} that wrap at least half of the pages")
+                          + (others > 0 ? L($"（另有 {others} 个局部布局只包少数页面，没画）", $" ({Plural(others, "more local layout wraps", "more local layouts wrap")} only a few pages; not drawn)") : ""));
                 // 没画的局部布局里套着守卫（<AdminPermissionGuard category=… permission=…> 包住 children）：看不见就以为那些页面没有权限检查，列出来
                 var deepest = layoutChain.Count > 0 ? dirOf[layoutChain[^1].Id] : appRoot;
                 var guarded = new List<(string Prefix, string Guard, int Pages)>();
@@ -833,8 +842,8 @@ public static partial class FrontendFrameworkFlow
                         guarded.Add((prefix, g, cover[l.Id]));
                     }
                 if (guarded.Count > 0)
-                    notes.Add($"守卫：{guarded.Count} 个局部布局带守卫，共包住 {guarded.Sum(g => g.Pages)} 个页面（只管它下面的路由，没画进骨架）："
-                              + string.Join("；", guarded.Select(g => $"{g.Prefix}（{g.Guard}，{g.Pages} 个页面）")));
+                    notes.Add(L($"守卫：{guarded.Count} 个局部布局带守卫，共包住 {guarded.Sum(g => g.Pages)} 个页面（只管它下面的路由，没画进骨架）：", $"Guards: {Plural(guarded.Count, "local layout has a guard", "local layouts have guards")}, wrapping {Plural(guarded.Sum(g => g.Pages), "page", "pages")} in total (they only cover the routes below them; not drawn in the skeleton): ")
+                              + string.Join(L("；", "; "), guarded.Select(g => L($"{g.Prefix}（{g.Guard}，{g.Pages} 个页面）", $"{g.Prefix} ({g.Guard}, {Plural(g.Pages, "page", "pages")})"))));
                 foreach (var layout in layoutChain) AddLayout(layout, pages, dirOf[layout.Id]);
                 // 出错边界：链上目录里的 error / global-error / not-found
                 var chainDirs = layoutChain.Select(l => dirOf[l.Id]).ToList();
@@ -848,11 +857,11 @@ public static partial class FrontendFrameworkFlow
                     var fn = DefaultExport(m) ?? m;
                     var what = stem switch
                     {
-                        "global-error" => "根布局自己也抛错时的兜底（替换整个 html）",
-                        "error" => "这一层以下的页面 / 布局渲染抛错时显示（Next 出错边界）",
-                        _ => "notFound() 或没匹配到路由时显示",
+                        "global-error" => L("根布局自己也抛错时的兜底（替换整个 html）", "Fallback when the root layout itself throws (replaces the whole html)"),
+                        "error" => L("这一层以下的页面 / 布局渲染抛错时显示（Next 出错边界）", "Shown when a page / layout below this level throws while rendering (Next error boundary)"),
+                        _ => L("notFound() 或没匹配到路由时显示", "Shown on notFound() or when no route matches"),
                     };
-                    AddTail("next:" + m.Path, Row(StageTail, fn, $"{file}（{Rel(dir)}）", what, fn.Kind == SymbolKind.Module ? [] : CallRows(fn, StageTail), m.Path, fn.StartLine));
+                    AddTail("next:" + m.Path, Row(StageTail, fn, L($"{file}（{Rel(dir)}）", $"{file} ({Rel(dir)})"), what, fn.Kind == SymbolKind.Module ? [] : CallRows(fn, StageTail), m.Path, fn.StartLine));
                 }
             }
             else
@@ -860,13 +869,13 @@ public static partial class FrontendFrameworkFlow
                 var app = new[] { "pages/_app", "src/pages/_app" }.SelectMany(p => ScriptExtensions.Select(ext => Join(p + ext))).Select(p => modulesByPath.GetValueOrDefault(p)).FirstOrDefault(m => m is not null);
                 if (app is not null)
                 {
-                    notes.Add($"挂载：Next.js Pages Router，每个页面都包在 {Rel(app.Path)} 里");
+                    notes.Add(L($"挂载：Next.js Pages Router，每个页面都包在 {Rel(app.Path)} 里", $"Mount: Next.js Pages Router; every page is wrapped in {Rel(app.Path)}"));
                     AddLayout(app, pages, app.Path[..app.Path.LastIndexOf('/')]);
                 }
-                else notes.Add("挂载：Next.js 项目里没找到 app/layout 或 pages/_app");
+                else notes.Add(L("挂载：Next.js 项目里没找到 app/layout 或 pages/_app", "Mount: no app/layout or pages/_app found in the Next.js project"));
             }
-            if (mountRows.Any(r => r.Actor == StageProvider)) notes.Add($"Provider 顺序 = 各层布局返回的 JSX 由外到内的嵌套（夹在布局之间：下一层布局渲染在上一层的 Provider 里面）；仓库里的包装组件进去接着找（最多 {MaxExpandLevel} 层），里面的标「经 X」");
-            if (routeRows.Count == 0) notes.Add("路由：Next.js 按 app/ 目录约定路由，没有 middleware.ts / proxy.ts");
+            if (mountRows.Any(r => r.Actor == StageProvider)) notes.Add(L($"Provider 顺序 = 各层布局返回的 JSX 由外到内的嵌套（夹在布局之间：下一层布局渲染在上一层的 Provider 里面）；仓库里的包装组件进去接着找（最多 {MaxExpandLevel} 层），里面的标「经 X」", $"Provider order = nesting of the JSX returned by each layout, outer to inner (between layouts: the next layout renders inside the previous layout's Providers); repo wrapper components are expanded (up to {MaxExpandLevel} levels), and providers found inside them are marked \"via X\""));
+            if (routeRows.Count == 0) notes.Add(L("路由：Next.js 按 app/ 目录约定路由，没有 middleware.ts / proxy.ts", "Routing: Next.js routes by the app/ directory convention; no middleware.ts / proxy.ts"));
             rootKids.AddRange(routeRows);
             rootKids.AddRange(mountRows);
         }
@@ -896,14 +905,14 @@ public static partial class FrontendFrameworkFlow
             if (File(module.Path) is not { } f) return;
             var fn = DefaultExport(module);
             var covered = pages.Count(p => Under(p, dir));
-            var note = $"布局 {Rel(module.Path)}" + (pages.Count > 0 ? $"：包住 {covered}/{pages.Count} 个页面" : "");
+            var note = L($"布局 {Rel(module.Path)}", $"Layout {Rel(module.Path)}") + (pages.Count > 0 ? L($"：包住 {covered}/{pages.Count} 个页面", $": wraps {covered}/{pages.Count} pages") : "");
             var kids = new List<FlowNodeDto>();
             var cj = fn is null ? null : ComponentJsx(fn);
             if (fn is not null)
             {
                 var (s, e) = f.Span(fn.StartLine, fn.EndLine);
                 if (GuardNote(f, s, e) is { } g)
-                    kids.Add(Node(null, $"守卫（{fn.Name}）", "", "external-group", StageRoute, g, [], f.Path, fn.StartLine));
+                    kids.Add(Node(null, L($"守卫（{fn.Name}）", $"Guard ({fn.Name})"), "", "external-group", StageRoute, g, [], f.Path, fn.StartLine));
                 var own = cj is { } c ? TagNames(c.Jsx).ToHashSet(StringComparer.Ordinal) : [];
                 kids.AddRange(CallRows(fn, StageMount, own));
             }

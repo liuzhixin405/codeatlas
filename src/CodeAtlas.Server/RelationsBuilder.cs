@@ -47,7 +47,7 @@ public static class RelationsBuilder
     public const int MaxNodes = 40;
     public const int MaxSamples = 5;
     public const string ExternalComponentKey = "external";
-    public const string ExternalComponentLabel = "外部";
+    public static string ExternalComponentLabel => L("外部", "External");
     public const double MinConfidence = 0.4;
 
     /// <summary>Kinds 的固定顺序（也是同置信度样例的先后）。</summary>
@@ -292,7 +292,7 @@ public static class RelationsBuilder
             if (MemberOf(u.Path) is not { } m)
             {
                 var key = FallbackKey(u);
-                result[u.Id] = new RelationComponentRef(key, key.Length == 0 ? "（根目录）" : MapBuilder.KeyLabel(key), null);
+                result[u.Id] = new RelationComponentRef(key, key.Length == 0 ? L("（根目录）", "(root)") : MapBuilder.KeyLabel(key), null);
                 continue;
             }
             var container = ContainerFor(m);

@@ -1,3 +1,4 @@
+import { L } from "./l10n";
 import type { ArchDto, ArchEdgeDto, ArchNodeDto } from "./types";
 
 /** 容器图三列：使用者 / 前端 | 服务容器 | 外部系统。 */
@@ -50,30 +51,30 @@ export function layerOf(n: ArchNodeDto): ArchLayer {
 export const SubKindLabels: Record<string, string> = {
   "dotnet-web": "ASP.NET Core",
   "dotnet-worker": "Worker",
-  "dotnet-exe": "进程",
-  "go-service": "Go 服务",
-  "python-service": "Python 服务",
-  "node-service": "Node 服务",
-  "node-cli": "Node 命令行",
-  "vscode-extension": "VS Code 扩展",
-  repo: "整个仓库",
-  "java-service": "Java 服务",
-  "service-registry": "服务注册中心",
-  "config-center": "配置中心",
-  frontend: "前端",
-  email: "邮件",
-  identity: "身份认证",
-  database: "数据库",
-  cache: "缓存",
-  broker: "消息",
-  "http-service": "HTTP 服务",
-  "grpc-service": "gRPC 服务",
-  "native-sdk": "原生 SDK",
-  storage: "存储",
-  observability: "遥测",
-  person: "使用者",
-  declared: "声明",
-  other: "外部",
+  "dotnet-exe": L("进程", "Process"),
+  "go-service": L("Go 服务", "Go service"),
+  "python-service": L("Python 服务", "Python service"),
+  "node-service": L("Node 服务", "Node service"),
+  "node-cli": L("Node 命令行", "Node CLI"),
+  "vscode-extension": L("VS Code 扩展", "VS Code extension"),
+  repo: L("整个仓库", "Whole repository"),
+  "java-service": L("Java 服务", "Java service"),
+  "service-registry": L("服务注册中心", "Service registry"),
+  "config-center": L("配置中心", "Config center"),
+  frontend: L("前端", "Frontend"),
+  email: L("邮件", "Email"),
+  identity: L("身份认证", "Identity"),
+  database: L("数据库", "Database"),
+  cache: L("缓存", "Cache"),
+  broker: L("消息", "Messaging"),
+  "http-service": L("HTTP 服务", "HTTP service"),
+  "grpc-service": L("gRPC 服务", "gRPC service"),
+  "native-sdk": L("原生 SDK", "Native SDK"),
+  storage: L("存储", "Storage"),
+  observability: L("遥测", "Telemetry"),
+  person: L("使用者", "User"),
+  declared: L("声明", "Declared"),
+  other: L("外部", "External"),
 };
 
 function nodeLabel(n: ArchNodeDto): string {
@@ -83,15 +84,15 @@ function nodeLabel(n: ArchNodeDto): string {
     const detail = [sub];
     if (n.ports.length > 0) detail.push(`:${n.ports.join("/")}`);
     parts.push(detail.join(" "));
-    if (n.outbound > 0) parts.push(`${n.outbound} 处出口`);
+    if (n.outbound > 0) parts.push(L(`${n.outbound} 处出口`, `${n.outbound} outbound ${n.outbound === 1 ? "call" : "calls"}`));
   } else {
-    parts.push(sub + (n.source === "declared" ? " · 声明" : ""));
+    parts.push(sub + (n.source === "declared" ? L(" · 声明", " · declared") : ""));
   }
   return parts.join("\n");
 }
 
 function edgeLabel(e: ArchEdgeDto): string {
-  const confidence = e.source === "declared" ? "声明" : e.confidence >= 0.9 ? "路由" : e.confidence >= 0.7 ? "配置" : e.confidence >= 0.5 ? "仅客户端" : "来自共享库，拿不准";
+  const confidence = e.source === "declared" ? L("声明", "declared") : e.confidence >= 0.9 ? L("路由", "routed") : e.confidence >= 0.7 ? L("配置", "configured") : e.confidence >= 0.5 ? L("仅客户端", "client only") : L("来自共享库，拿不准", "from a shared library, uncertain");
   return `${e.protocol} · ${confidence}`;
 }
 

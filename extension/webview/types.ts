@@ -152,6 +152,8 @@ export interface RelationsDto {
   nodes: RelationNodeDto[];
   edges: RelationEdgeDto[];
   truncated: boolean;
+  /** 涉及的文件里在上次索引后改过的（相对路径，服务端按 stat / 哈希现查）；没有或旧服务为 null / 缺省。 */
+  staleFiles?: string[] | null;
 }
 
 // ---- 影响范围（GET /api/symbols/{id}/impact），与 src/CodeAtlas.Server/Dtos.cs 的 ImpactDto 对应 ----
@@ -197,6 +199,8 @@ export interface ImpactDto {
   /** 测试代码里的直接调用方个数（tests=false 时只计数不列出）。 */
   testCallers: number;
   truncated: boolean;
+  /** 涉及的文件里在上次索引后改过的（相对路径，服务端按 stat / 哈希现查）；没有或旧服务为 null / 缺省。 */
+  staleFiles?: string[] | null;
 }
 
 // ---- 调用大纲（GET /api/symbols/{id}/outline），与 src/CodeAtlas.Server/Dtos.cs 的 OutlineDto 对应 ----
@@ -230,6 +234,8 @@ export interface OutlineDto {
   symbol: SymbolDto;
   steps: OutlineStepDto[];
   truncated: boolean;
+  /** 涉及的文件里在上次索引后改过的（相对路径，服务端按 stat / 哈希现查）；没有或旧服务为 null / 缺省。 */
+  staleFiles?: string[] | null;
 }
 
 export interface HealthDto {
@@ -434,6 +440,8 @@ export interface FlowDto {
   nodes: number;
   truncated: boolean;
   note: string | null;
+  /** 涉及的文件里在上次索引后改过的（相对路径，服务端按 stat / 哈希现查）；没有或旧服务为 null / 缺省。 */
+  staleFiles?: string[] | null;
 }
 
 export interface IndexReportDto {
@@ -567,4 +575,111 @@ export interface DsmViolationDto {
   ruleId: number;
   /** forbid：违规边数；require 未满足：0。 */
   count: number;
+}
+
+// ---- 改动影响分析（GET /api/affected），与 src/CodeAtlas.Server/AffectedDtos.cs 对应 ----
+
+export interface AffectedRangeDto {
+  /** 新侧起始行（1 起）。 */
+  start: number;
+  /** 新侧行数；0 = 纯删除，删在 start 行之后。 */
+  count: number;
+}
+
+export interface AffectedFileDto {
+  path: string;
+  oldPath: string | null;
+  status: "added" | "deleted" | "renamed" | "modified";
+  /** symbols 按符号算 / file 退化为文件级 / skipped 没算（原因在 note）。 */
+  analysis: "symbols" | "file" | "skipped";
+  ranges: AffectedRangeDto[];
+  /** 落在任何符号之外的改动行。 */
+  outside: number[];
+  symbols: number;
+  isTest: boolean;
+  /** 索引比工作区旧，行号可能对不上。 */
+  stale: boolean;
+  note: string | null;
+}
+
+export interface AffectedEntryDto extends ImpactEntryDto {
+  /** 链路置信度（所有路径里最弱一条边最强的那条）；< 0.7 是推测。 */
+  confidence: number;
+  /** 能走到它的改动符号 id。 */
+  from: number[];
+}
+
+export interface AffectedTestDto {
+  symbol: SymbolDto;
+  label: string;
+  depth: number;
+  confidence: number;
+  from: number[];
+}
+
+export interface AffectedSymbolDto {
+  symbol: SymbolDto;
+  label: string;
+  /** lines：改动行落在它里面；file：文件级退化带进来的。 */
+  reason: "lines" | "file";
+  lines: number[];
+  isTest: boolean;
+  entries: AffectedEntryDto[];
+  tests: AffectedTestDto[];
+  callers: number;
+  truncated: boolean;
+}
+
+export interface AffectedDto {
+  base: string | null;
+  mergeBase: string | null;
+  input: "git" | "diff" | "files";
+  files: AffectedFileDto[];
+  symbols: AffectedSymbolDto[];
+  entries: AffectedEntryDto[];
+  tests: AffectedTestDto[];
+  testFiles: string[];
+  depth: number;
+  truncated: boolean;
+  warnings: string[];
+}
+
+// ---- 两点间调用路径（GET /api/symbols/{id}/paths?to=），与 src/CodeAtlas.Server/CallPathFinder.cs 的 CallPathsDto 对应 ----
+
+export interface CallPathStepDto {
+  fromId: number;
+  toId: number;
+  label: string;
+  qualifiedName: string;
+  /** call（calls 边）/ dispatch（分派边）。 */
+  kind: "call" | "dispatch";
+  via: string | null;
+  confidence: number;
+  /** 调用处所在文件（调用方的文件）。 */
+  path: string;
+  line: number;
+  pos: number | null;
+  /** 分派边或 confidence < 0.7：图里画虚线。 */
+  weak: boolean;
+}
+
+export interface CallPathDto {
+  steps: CallPathStepDto[];
+  minConfidence: number;
+  /** 经过分派边或低置信度边。 */
+  inferred: boolean;
+}
+
+export interface CallPathsDto {
+  fromId: number;
+  fromLabel: string;
+  toId: number;
+  toLabel: string;
+  paths: CallPathDto[];
+  maxDepth: number;
+  maxPaths: number;
+  truncated: boolean;
+  /** 全部路径按共同前缀合并成的时序树：用时序图渲染器画。 */
+  flow: FlowDto;
+  note: string | null;
 }

@@ -1,3 +1,4 @@
+import { L } from "./l10n";
 import type { ArchDto, ArchNodeDto, DsmDto, EntryDto, FlowDto, FlowNodeDto } from "./types";
 
 /**
@@ -22,7 +23,7 @@ export function shouldAutoOpenFlow(arch: ArchDto | null): boolean {
 export const RepoDsmKey = "*";
 
 /** 纯类库仓库第一屏的提示。 */
-export const NoServiceHint = "未发现可部署的服务，显示模块依赖";
+export const NoServiceHint = L("未发现可部署的服务，显示模块依赖", "No deployable services found; showing module dependencies");
 
 /**
  * 第一屏是否直接打开整库 DSM：服务给了容器图（不是旧服务的 null）但一个容器都没有——只有类库，
@@ -40,7 +41,7 @@ export function hasDsmContent(d: DsmDto | null): boolean {
 
 /** 整库伪容器的节点：面包屑与 DSM 标题用。name 一般是仓库目录名。 */
 export function repoContainerNode(name: string): ArchNodeDto {
-  return { key: RepoDsmKey, kind: "container", subKind: "repo", name: name || "仓库", path: "", source: "discovered", evidence: [], members: [], ports: [], namespaceRoots: [], outbound: 0 };
+  return { key: RepoDsmKey, kind: "container", subKind: "repo", name: name || L("仓库", "Repository"), path: "", source: "discovered", evidence: [], members: [], ports: [], namespaceRoots: [], outbound: 0 };
 }
 
 /** 是不是整库伪容器（没有入口流程、没有容器叙述）。 */

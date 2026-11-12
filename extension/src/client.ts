@@ -1,4 +1,4 @@
-import type { FileLensDto, HealthDto, ImpactDto, IndexStatusDto, OutlineDto, SymbolDto } from "../webview/types";
+import type { AffectedDto, FileLensDto, HealthDto, ImpactDto, IndexStatusDto, OutlineDto, SymbolDto } from "../webview/types";
 
 /** 扩展侧用的服务客户端（Node 18+ 自带 fetch）。 */
 export class ServerClient {
@@ -38,6 +38,24 @@ export class ServerClient {
     if (r.status === 404) return null;
     if (!r.ok) throw new Error(`symbols/${id}/impact → ${r.status}`);
     return (await r.json()) as ImpactDto;
+  }
+
+  /**
+   * 改动影响分析：服务在仓库里跑 git diff（base 默认 HEAD，取 merge-base → 工作区），改动的符号 → 受影响的入口与测试。
+   * 服务版本过旧没有这个接口返回 null；git 出错（不是仓库、base 不存在）时抛出带服务端说明的错误。
+   */
+  async affected(opts: { base?: string; depth?: number } = {}): Promise<AffectedDto | null> {
+    const q = new URLSearchParams();
+    if (opts.base) q.set("base", opts.base);
+    if (opts.depth) q.set("depth", String(opts.depth));
+    const r = await fetch(`${this.apiBase}/api/affected?${q}`, { headers: this.headers() });
+    if (r.status === 404) return null;
+    if (r.status === 400) {
+      const body = (await r.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(body?.error ?? "affected → 400");
+    }
+    if (!r.ok) throw new Error(`affected → ${r.status}`);
+    return (await r.json()) as AffectedDto;
   }
 
   /**

@@ -37,29 +37,31 @@ public static partial class NodeFrameworkFlow
         var middle = new List<FlowNodeDto>([.. acc.Plugins, .. pre]);
         var tail = new List<FlowNodeDto>([.. post, .. acc.NotFound, .. errors, .. acc.ErrorHandlers]);
         var httpCount = x.Entries.Count(e => e.Kind == "http");
-        var placeholder = httpCount > 0 ? Node(null, "路由", "", "controllers", StageController, null, tail, null, null, httpCount) : null;
+        var placeholder = httpCount > 0 ? Node(null, L("路由", "Routes"), "", "controllers", StageController, null, tail, null, null, httpCount) : null;
         var children = new List<FlowNodeDto>(middle);
         if (placeholder is not null) children.Add(placeholder); else children.AddRange(tail);
-        var root = Node(null, "HTTP 请求", "", "entry", middle.Count > 0 ? StageMiddleware : StageController, null, children, null, null);
+        var root = Node(null, L("HTTP 请求", "HTTP request"), "", "entry", middle.Count > 0 ? StageMiddleware : StageController, null, children, null, null);
 
         var stages = new List<FrameworkStageDto>();
-        if (middle.Count > 0) stages.Add(new FrameworkStageDto(StageMiddleware, "钩子", acc.Plugins.Count == 0, acc.PreSymbols.DistinctBy(s => s.Id).Select(x.Dto).ToList()));
-        if (placeholder is not null) stages.Add(new FrameworkStageDto(StageController, "路由", true, x.EntrySymbols("http")));
-        if (tail.Count > 0) stages.Add(new FrameworkStageDto(StageTail, "收尾", true, acc.TailSymbols.DistinctBy(s => s.Id).Select(x.Dto).ToList()));
+        if (middle.Count > 0) stages.Add(new FrameworkStageDto(StageMiddleware, L("钩子", "Hooks"), acc.Plugins.Count == 0, acc.PreSymbols.DistinctBy(s => s.Id).Select(x.Dto).ToList()));
+        if (placeholder is not null) stages.Add(new FrameworkStageDto(StageController, L("路由", "Routes"), true, x.EntrySymbols("http")));
+        if (tail.Count > 0) stages.Add(new FrameworkStageDto(StageTail, L("收尾", "Teardown"), true, acc.TailSymbols.DistinctBy(s => s.Id).Select(x.Dto).ToList()));
 
         var notes = new List<string>
         {
-            $"认出 Fastify（{x.Where(app.File, app.Pos)} 的 {app.Var} = Fastify(…)）",
-            "钩子按 Fastify 生命周期排：onRequest → preParsing → preValidation → preHandler →（处理函数）→ preSerialization → onSend → onResponse；"
+            L($"认出 Fastify（{x.Where(app.File, app.Pos)} 的 {app.Var} = Fastify(…)）", $"Recognized Fastify ({app.Var} = Fastify(…) at {x.Where(app.File, app.Pos)})"),
+            L("钩子按 Fastify 生命周期排：onRequest → preParsing → preValidation → preHandler →（处理函数）→ preSerialization → onSend → onResponse；"
             + "同一钩子按注册顺序（register 的插件在注册处展开）；onError / setErrorHandler 是出错时",
+              "Hooks follow the Fastify lifecycle: onRequest → preParsing → preValidation → preHandler → (handler) → preSerialization → onSend → onResponse; "
+            + "the same hook runs in registration order (registered plugins are expanded where registered); onError / setErrorHandler run on error"),
         };
-        if (acc.RepoPlugins.Count > 0) notes.Add($"仓库插件：{string.Join("、", acc.RepoPlugins)}");
+        if (acc.RepoPlugins.Count > 0) notes.Add(L($"仓库插件：{string.Join("、", acc.RepoPlugins)}", $"Repo plugins: {string.Join(", ", acc.RepoPlugins)}"));
         if (acc.ExternalPlugins.Count > 0)
-            notes.Add($"第三方插件 {string.Join("、", acc.ExternalPlugins)}：内部挂的钩子看不到，画在钩子列最前（按注册顺序），这一列的先后不完全可信");
-        if (acc.Hooks.Count == 0) notes.Add($"没找到 {app.Var}.addHook(...) 注册的钩子");
-        if (errors.Count == 0 && acc.ErrorHandlers.Count == 0) notes.Add("没找到 setErrorHandler / onError 钩子：出错时走 Fastify 默认的错误处理（回 500 JSON）");
-        if (httpCount == 0) notes.Add("没有发现 HTTP 路由入口");
-        return Assemble(x.Container, "HTTP 请求", root, stages, [], notes, "入口");
+            notes.Add(L($"第三方插件 {string.Join("、", acc.ExternalPlugins)}：内部挂的钩子看不到，画在钩子列最前（按注册顺序），这一列的先后不完全可信", $"Third-party plugins {string.Join(", ", acc.ExternalPlugins)}: hooks they add internally are not visible; drawn first in the hooks column (in registration order), so the order of this column is not fully reliable"));
+        if (acc.Hooks.Count == 0) notes.Add(L($"没找到 {app.Var}.addHook(...) 注册的钩子", $"No hooks registered with {app.Var}.addHook(...) found"));
+        if (errors.Count == 0 && acc.ErrorHandlers.Count == 0) notes.Add(L("没找到 setErrorHandler / onError 钩子：出错时走 Fastify 默认的错误处理（回 500 JSON）", "No setErrorHandler / onError hook found: errors go to Fastify's default error handler (responds 500 JSON)"));
+        if (httpCount == 0) notes.Add(L("没有发现 HTTP 路由入口", "No HTTP route entries found"));
+        return Assemble(x.Container, L("HTTP 请求", "HTTP request"), root, stages, [], notes, L("入口", "Entry"));
     }
 
     /// <summary>[start, end) 里 receiver 上的 addHook / register / setErrorHandler / setNotFoundHandler；仓库插件进去接着找（4 层，receiver 换成插件函数的第一个形参）。</summary>
@@ -72,24 +74,24 @@ public static partial class NodeFrameworkFlow
             string? Lit(int k) => k < args.Count ? ArgParser.Literal(t.NoComments[args[k].Start..args[k].End]) : null;
             var where = x.Where(file, c.Pos);
             var line = x.LineOf(file, c.Pos);
-            var scopeNote = scope is null ? "" : "；" + scope;
+            var scopeNote = scope is null ? "" : L("；", "; ") + scope;
             switch (c.Name)
             {
                 case "addHook" when args.Count >= 2 && Lit(0) is { } hook:
                 {
                     var actor = FastifyPreHooks.Contains(hook) ? StageMiddleware : StageTail;
                     var arg = Classify(x, file, args[1].Start, args[1].End, "fastify");
-                    var note = (FastifyErrorHooks.Contains(hook) ? "出错时：" : "") + $"{hook} 钩子（{where}）" + scopeNote;
+                    var note = (FastifyErrorHooks.Contains(hook) ? L("出错时：", "On error: ") : "") + L($"{hook} 钩子（{where}）", $"{hook} hook ({where})") + scopeNote;
                     acc.Hooks.Add((hook, acc.Seq++, HookNode(x, hook, arg, file, line, actor, note, actor == StageMiddleware ? acc.PreSymbols : acc.TailSymbols)));
                     break;
                 }
                 case "setErrorHandler" when args.Count >= 1:
                     acc.ErrorHandlers.Add(HookNode(x, "setErrorHandler", Classify(x, file, args[0].Start, args[0].End, "fastify"), file, line, StageTail,
-                        $"出错时（setErrorHandler，{where}）" + scopeNote, acc.TailSymbols));
+                        L($"出错时（setErrorHandler，{where}）", $"On error (setErrorHandler, {where})") + scopeNote, acc.TailSymbols));
                     break;
                 case "setNotFoundHandler" when args.Count >= 1:
                     acc.NotFound.Add(HookNode(x, "setNotFoundHandler", Classify(x, file, args[^1].Start, args[^1].End, "fastify"), file, line, StageTail,
-                        $"没有路由匹配时（setNotFoundHandler，{where}）" + scopeNote, acc.TailSymbols));
+                        L($"没有路由匹配时（setNotFoundHandler，{where}）", $"When no route matches (setNotFoundHandler, {where})") + scopeNote, acc.TailSymbols));
                     break;
                 case "register" when args.Count >= 1:
                 {
@@ -100,15 +102,15 @@ public static partial class NodeFrameworkFlow
                     {
                         acc.ExternalPlugins.Add(label);
                         acc.Plugins.Add(Node(null, label, "", "external-group", StageMiddleware,
-                            $"{(package is null ? "插件（没找到源码）" : $"第三方插件（{package}）")}（{where}）：内部挂的钩子看不到" + (optPrefix.Length > 0 ? $"；前缀 {full}" : "") + scopeNote, [], file, line));
+                            L($"{(package is null ? "插件（没找到源码）" : $"第三方插件（{package}）")}（{where}）：内部挂的钩子看不到", $"{(package is null ? "plugin (source not found)" : $"third-party plugin ({package})")} ({where}): hooks it adds internally are not visible") + (optPrefix.Length > 0 ? L($"；前缀 {full}", $"; prefix {full}") : "") + scopeNote, [], file, line));
                         break;
                     }
                     if (fnSymbol is not null && !visited.Add(fnSymbol.Id) || depth >= 4 || fn.Params.Count == 0 || fn.Params[0] == "{}") break;
                     var pluginScope = wrapped
-                        ? $"经插件 {label}（fastify-plugin 包过，作用于外层）"
-                        : $"插件 {label} 里注册：封装作用域，只对它注册的路由生效" + (full != "/" ? $"（前缀 {full}）" : "");
-                    acc.RepoPlugins.Add(label + (wrapped ? "（fastify-plugin 包过，钩子作用于外层）" : "（封装作用域" + (full != "/" ? $"，前缀 {full}" : "") + "）"));
-                    ScanFastify(x, fn.Path, fn.BodyStart, fn.End, fn.Params[0], scope is null ? pluginScope : scope + "；" + pluginScope, full, depth + 1, visited, acc);
+                        ? L($"经插件 {label}（fastify-plugin 包过，作用于外层）", $"via plugin {label} (wrapped with fastify-plugin, applies to the outer scope)")
+                        : L($"插件 {label} 里注册：封装作用域，只对它注册的路由生效", $"registered in plugin {label}: encapsulated scope, applies only to the routes it registers") + (full != "/" ? L($"（前缀 {full}）", $" (prefix {full})") : "");
+                    acc.RepoPlugins.Add(label + (wrapped ? L("（fastify-plugin 包过，钩子作用于外层）", " (wrapped with fastify-plugin, hooks apply to the outer scope)") : L("（封装作用域", " (encapsulated scope") + (full != "/" ? L($"，前缀 {full}", $", prefix {full}") : "") + L("）", ")")));
+                    ScanFastify(x, fn.Path, fn.BodyStart, fn.End, fn.Params[0], scope is null ? pluginScope : scope + L("；", "; ") + pluginScope, full, depth + 1, visited, acc);
                     break;
                 }
             }
@@ -135,7 +137,7 @@ public static partial class NodeFrameworkFlow
         switch (arg)
         {
             case InlineArg i:
-                return (i.Fn, null, "（内联插件）", null, false);
+                return (i.Fn, null, L("（内联插件）", "(inline plugin)"), null, false);
             case FnArg f when x.FunctionOf(f.Symbol) is { } fn:
                 return (fn, f.Symbol, x.Label(f.Symbol), null, WrappedByPlugin(x, f.Symbol));
             case ExternalArg ext:
@@ -163,7 +165,7 @@ public static partial class NodeFrameworkFlow
             case InlineArg i:
             {
                 var calls = x.CallsInSpan(file, i.Fn.Start, i.Fn.End, i.Fn.BodyStart);
-                return Node(null, $"{hook}（内联）", "", "external-group", actor, note, HookRows(x, i.Fn, calls, file, actor), file, line);
+                return Node(null, L($"{hook}（内联）", $"{hook} (inline)"), "", "external-group", actor, note, HookRows(x, i.Fn, calls, file, actor), file, line);
             }
             case FnArg f:
             {
@@ -174,9 +176,9 @@ public static partial class NodeFrameworkFlow
                     fn is null ? Rows(calls.Where(JsKeep), f.Symbol.Path, actor, null) : HookRows(x, fn, calls, f.Symbol.Path, actor), file, line);
             }
             case ExternalArg ext:
-                return Node(null, ext.Label, "", "external-group", actor, note + (ext.Package is { } p ? $"；第三方（{p}）" : ""), [], file, line);
+                return Node(null, ext.Label, "", "external-group", actor, note + (ext.Package is { } p ? L($"；第三方（{p}）", $"; third-party ({p})") : ""), [], file, line);
             default:
-                return Node(null, hook, "", "external-group", actor, note + "；没认出处理函数", [], file, line);
+                return Node(null, hook, "", "external-group", actor, note + L("；没认出处理函数", "; handler not recognized"), [], file, line);
         }
     }
 

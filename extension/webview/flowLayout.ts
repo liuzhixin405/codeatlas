@@ -1,3 +1,4 @@
+import { L } from "./l10n";
 import type { FlowActorDto, FlowDto, FlowNodeDto } from "./types";
 
 /** 深度小于这个值的节点默认展开，再深的默认折起来，点一下再看。 */
@@ -30,9 +31,11 @@ export interface ViaStyle {
 /** 只给调用箭头区分来历：via=render 是 JSX 里渲染组件（<X />），不是函数调用。hop 的 via 是协议，另有显示。 */
 export function viaStyle(node: FlowNodeDto): ViaStyle | null {
   if (node.kind !== "call") return null;
-  if (node.via === "render") return { cls: "via-render", tag: "渲染" };
+  if (node.via === "render") return { cls: "via-render", tag: L("渲染", "render") };
   // 作为实参 / 属性值传出去的函数（stream.on("data", onData)、mutationFn: login）：框架回头调它
-  if (node.via === "callback") return { cls: "via-render", tag: "回调" };
+  if (node.via === "callback") return { cls: "via-render", tag: L("回调", "callback") };
+  // 合成边：按事件频道名把 emit('x') 配到 on('x', handler)，不是直接调用（索引端见 EventChannelLinker）
+  if (node.via?.startsWith("event:")) return { cls: "via-event", tag: L(`事件 ${node.via.slice("event:".length)}`, `event ${node.via.slice("event:".length)}`) };
   return null;
 }
 
@@ -42,8 +45,8 @@ export interface FlowLayout {
 }
 
 /** 默认展开规则 + expanded 集合里的 id 取反。 */
-export function isExpanded(node: FlowNodeDto, id: string, expanded: Set<string>): boolean {
-  const byDefault = node.depth < DefaultCollapseDepth;
+export function isExpanded(node: FlowNodeDto, id: string, expanded: Set<string>, collapseDepth = DefaultCollapseDepth): boolean {
+  const byDefault = node.depth < collapseDepth;
   return expanded.has(id) ? !byDefault : byDefault;
 }
 
@@ -74,7 +77,7 @@ export function flowColumns(dto: FlowDto, preset: FlowPreset | string): { column
   columns.forEach((a, i) => colOf.set(a.key, i));
   const externals = dto.actors.filter((a) => a.kind === "external");
   if (externals.length > 0) {
-    const label = externals.length === 1 ? externals[0]!.label : `外部（${externals.length}）`;
+    const label = externals.length === 1 ? externals[0]!.label : L(`外部（${externals.length}）`, `External (${externals.length})`);
     columns.push({ key: ExternalGroupKey, label, kind: "external" });
     for (const a of externals) colOf.set(a.key, columns.length - 1);
   }
@@ -83,9 +86,9 @@ export function flowColumns(dto: FlowDto, preset: FlowPreset | string): { column
 
 /**
  * 把流程树摊成时序图的行：先序遍历可见节点，每行记下从哪列画到哪列。
- * 纯函数，不碰 DOM。preset 见 flowColumns，默认 first-seen。
+ * 纯函数，不碰 DOM。preset 见 flowColumns，默认 first-seen。collapseDepth：深度小于它的默认展开（两点间路径传 Infinity，整条路径都摊开）。
  */
-export function layoutFlow(dto: FlowDto, expanded: Set<string>, preset: FlowPreset | string = "first-seen"): FlowLayout {
+export function layoutFlow(dto: FlowDto, expanded: Set<string>, preset: FlowPreset | string = "first-seen", collapseDepth = DefaultCollapseDepth): FlowLayout {
   const { columns, colOf } = flowColumns(dto, preset);
   const rows: FlowRow[] = [];
   const visit = (node: FlowNodeDto, id: string, parentCol: number | null): void => {
@@ -94,7 +97,7 @@ export function layoutFlow(dto: FlowDto, expanded: Set<string>, preset: FlowPres
     const fromCol = parentCol ?? toCol;
     // 未对上后端的接口调用（kind=http）是叶子：服务端不给孩子，万一给了也不展开
     const hasChildren = node.kind !== "http" && node.children.length > 0;
-    const open = isExpanded(node, id, expanded);
+    const open = isExpanded(node, id, expanded, collapseDepth);
     rows.push({
       id, node, depth: node.depth, fromCol, toCol,
       direction: toCol > fromCol ? "right" : toCol < fromCol ? "left" : "self",

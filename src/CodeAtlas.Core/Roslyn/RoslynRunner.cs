@@ -29,7 +29,7 @@ public static class RoslynRunner
     public const int GlobalJsonSdkMissingExitCode = 4;
 
     /// <summary>缺运行时 / SDK 时附在原因后面的说明。</summary>
-    public const string FallbackNote = "C# 改用 tree-sitter 解析（精度略低），其他语言不受影响。";
+    public static string FallbackNote => L("C# 改用 tree-sitter 解析（精度略低），其他语言不受影响。", " C# falls back to tree-sitter parsing (slightly less precise); other languages are not affected.");
 
     /// <summary>
     /// 找 worker：环境变量 CODEATLAS_ROSLYN_WORKER → 宿主程序目录下 roslyn/ 子目录 → 宿主程序同目录（旧布局、开发环境）；
@@ -58,9 +58,10 @@ public static class RoslynRunner
     /// </summary>
     public static async Task<string?> ProbeAsync(string workerPath, CancellationToken ct = default)
     {
-        lock (ProbeCache) if (ProbeCache.TryGetValue(workerPath, out var cached)) return cached;
+        var cacheKey = Loc.Current + "|" + workerPath; // 原因是给人看的文本，按语言分开缓存
+        lock (ProbeCache) if (ProbeCache.TryGetValue(cacheKey, out var cached)) return cached;
         var reason = await ProbeCoreAsync(workerPath, ct);
-        lock (ProbeCache) ProbeCache[workerPath] = reason;
+        lock (ProbeCache) ProbeCache[cacheKey] = reason;
         return reason;
     }
 
@@ -75,15 +76,16 @@ public static class RoslynRunner
         if (workerPath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)) { psi.FileName = "dotnet"; psi.ArgumentList.Add(workerPath); }
         else psi.FileName = workerPath;
         psi.ArgumentList.Add("--probe");
+        psi.Environment[Loc.EnvVar] = Loc.Current;
         Process? process;
         try { process = Process.Start(psi); }
         catch (System.ComponentModel.Win32Exception ex)
         {
             return psi.FileName == "dotnet"
-                ? $"没有找到 dotnet 命令，C# 精确语义（Roslyn）需要 .NET 10。{FallbackNote}"
-                : $"无法启动 {WorkerName}：{ex.Message}。{FallbackNote}";
+                ? L($"没有找到 dotnet 命令，C# 精确语义（Roslyn）需要 .NET 10。{FallbackNote}", $"The dotnet command was not found; C# precise semantics (Roslyn) requires .NET 10.{FallbackNote}")
+                : L($"无法启动 {WorkerName}：{ex.Message}。{FallbackNote}", $"Cannot start {WorkerName}: {ex.Message}.{FallbackNote}");
         }
-        if (process is null) return $"无法启动 {WorkerName}。{FallbackNote}";
+        if (process is null) return L($"无法启动 {WorkerName}。{FallbackNote}", $"Cannot start {WorkerName}.{FallbackNote}");
         using (process)
         {
             var stdout = process.StandardOutput.ReadToEndAsync(CancellationToken.None);
@@ -91,7 +93,7 @@ public static class RoslynRunner
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromSeconds(60));
             try { await process.WaitForExitAsync(timeout.Token); }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { TryKill(process); return $"{WorkerName} 探测超时。{FallbackNote}"; }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { TryKill(process); return L($"{WorkerName} 探测超时。{FallbackNote}", $"{WorkerName} probe timed out.{FallbackNote}"); }
             catch (OperationCanceledException) { TryKill(process); throw; }
             await stdout;
             return DescribeProbeFailure(process.ExitCode, await stderr);
@@ -102,17 +104,17 @@ public static class RoslynRunner
     public static string? DescribeProbeFailure(int exitCode, string stderr)
     {
         if (exitCode == 0) return null;
-        if (exitCode == ProbeNoSdkExitCode) return $"没有找到 .NET SDK，C# 精确语义（Roslyn）要用它读取项目文件。{FallbackNote}";
+        if (exitCode == ProbeNoSdkExitCode) return L($"没有找到 .NET SDK，C# 精确语义（Roslyn）要用它读取项目文件。{FallbackNote}", $"No .NET SDK found; C# precise semantics (Roslyn) needs it to read project files.{FallbackNote}");
         // .NET 启动器找不到运行时：Windows 上退出码是 0x8000808x / 0x8000809x，Linux / macOS 上只剩低 8 位（实测 Ubuntu 24.04 是 131）；
         // stderr 是 "You must install .NET to run this application."（没装）或 "You must install or update .NET …"（版本不够），
         // 后面跟 "Learn more: https://aka.ms/dotnet/app-launch-failed"
         var hostError = (uint)exitCode is >= 0x80008080 and <= 0x800080FF;
         if (hostError || stderr.Contains("You must install", StringComparison.OrdinalIgnoreCase) || stderr.Contains("app-launch-failed", StringComparison.OrdinalIgnoreCase)
             || stderr.Contains("framework 'Microsoft.NETCore.App'", StringComparison.OrdinalIgnoreCase))
-            return $"没有找到 .NET 10 运行时，C# 精确语义（Roslyn）需要它（装 .NET 10 SDK 即可）。{FallbackNote}";
+            return L($"没有找到 .NET 10 运行时，C# 精确语义（Roslyn）需要它（装 .NET 10 SDK 即可）。{FallbackNote}", $"No .NET 10 runtime found; C# precise semantics (Roslyn) requires it (installing the .NET 10 SDK is enough).{FallbackNote}");
         var tail = string.Join(" ", stderr.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
         if (tail.Length > 300) tail = tail[^300..];
-        return $"{WorkerName} 探测失败（退出码 {exitCode}）{(tail.Length > 0 ? "：" + tail : "")}。{FallbackNote}";
+        return L($"{WorkerName} 探测失败（退出码 {exitCode}）{(tail.Length > 0 ? "：" + tail : "")}。{FallbackNote}", $"{WorkerName} probe failed (exit code {exitCode}){(tail.Length > 0 ? ": " + tail : "")}.{FallbackNote}");
     }
 
     /// <summary>Linux / macOS：VSIX 解压后不一定保留可执行位，启动前补上。</summary>
@@ -215,6 +217,7 @@ public static class RoslynRunner
             StandardErrorEncoding = System.Text.Encoding.UTF8,
             WorkingDirectory = repoRoot,
         };
+        psi.Environment[Loc.EnvVar] = Loc.Current; // 子进程输出的提示与本进程同一种语言
         EnsureExecutable(workerPath);
         if (workerPath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)) { psi.FileName = "dotnet"; psi.ArgumentList.Add(workerPath); }
         else psi.FileName = workerPath;
@@ -223,7 +226,7 @@ public static class RoslynRunner
         psi.ArgumentList.Add("--base"); psi.ArgumentList.Add(basePath);
         if (onlyListPath is not null) { psi.ArgumentList.Add("--only"); psi.ArgumentList.Add(onlyListPath); }
 
-        using var process = Process.Start(psi) ?? throw new RoslynWorkerException($"无法启动 {workerPath}");
+        using var process = Process.Start(psi) ?? throw new RoslynWorkerException(L($"无法启动 {workerPath}", $"Cannot start {workerPath}"));
         var stderrTail = new Queue<string>();
         var stderrPump = Task.Run(async () =>
         {
@@ -246,13 +249,13 @@ public static class RoslynRunner
                 {
                     TryKill(process);
                     ct.ThrowIfCancellationRequested();
-                    throw new RoslynWorkerException($"Roslyn worker {timeout.TotalMinutes:F0} 分钟没有输出，已终止。");
+                    throw new RoslynWorkerException(L($"Roslyn worker {timeout.TotalMinutes:F0} 分钟没有输出，已终止。", $"Roslyn worker produced no output for {timeout.TotalMinutes:F0} minutes; terminated."));
                 }
                 var line = await readLine;
                 if (line is null) break;
                 RoslynRecord? record;
                 try { record = RecordJson.Deserialize(line); }
-                catch (System.Text.Json.JsonException ex) { log?.Invoke($"忽略无法解析的输出行：{ex.Message}"); continue; }
+                catch (System.Text.Json.JsonException ex) { log?.Invoke(L($"忽略无法解析的输出行：{ex.Message}", $"Ignoring unparsable output line: {ex.Message}")); continue; }
                 if (record is not null) yield return record;
             }
         }
@@ -264,10 +267,10 @@ public static class RoslynRunner
         await process.WaitForExitAsync(ct);
         await stderrPump;
         if (process.ExitCode == GlobalJsonSdkMissingExitCode)
-            throw new RoslynWorkerException((stderrTail.LastOrDefault(l => l.Contains("global.json", StringComparison.Ordinal))?.Replace("codeatlas-roslyn: 失败 ", "")
-                ?? "仓库 global.json 要求的 .NET SDK 本机没有兼容版本。") + FallbackNote);
+            throw new RoslynWorkerException((stderrTail.LastOrDefault(l => l.Contains("global.json", StringComparison.Ordinal))?.Replace("codeatlas-roslyn: 失败 ", "").Replace("codeatlas-roslyn: failed: ", "") // worker 按同一语言输出前缀（见 worker Program）
+                ?? L("仓库 global.json 要求的 .NET SDK 本机没有兼容版本。", "No compatible version of the .NET SDK required by the repository's global.json is installed.")) + FallbackNote);
         if (process.ExitCode != 0)
-            throw new RoslynWorkerException($"Roslyn worker 退出码 {process.ExitCode}。" + (stderrTail.Count > 0 ? "\n" + string.Join("\n", stderrTail) : ""));
+            throw new RoslynWorkerException(L($"Roslyn worker 退出码 {process.ExitCode}。", $"Roslyn worker exit code {process.ExitCode}.") + (stderrTail.Count > 0 ? "\n" + string.Join("\n", stderrTail) : ""));
     }
 
     /// <summary>跑 worker 并把结果写回索引库。progress 收到 worker 的进度记录；log 收到 worker 的 stderr。</summary>
@@ -298,7 +301,7 @@ public static class RoslynRunner
             var csharp = db.Scalar<long>("SELECT COUNT(*) FROM files WHERE language = 'csharp'");
             if (pendingFiles.Count * 2L > csharp)
             {
-                log?.Invoke($"待更新 {pendingFiles.Count}/{csharp} 个 C# 文件，超过一半，走全量");
+                log?.Invoke(L($"待更新 {pendingFiles.Count}/{csharp} 个 C# 文件，超过一半，走全量", $"{pendingFiles.Count}/{csharp} C# files to update, more than half; running a full pass"));
                 pendingFiles = null;
             }
         }
@@ -319,7 +322,7 @@ public static class RoslynRunner
         var succeeded = new List<(string Solution, List<string>? Files)>();
         foreach (var (solution, files) in runs)
         {
-            if (runs.Count > 1 || files is not null) log?.Invoke($"解决方案 {solution}{(files is null ? "" : $"（{files.Count} 个待更新文件）")}");
+            if (runs.Count > 1 || files is not null) log?.Invoke(L($"解决方案 {solution}{(files is null ? "" : $"（{files.Count} 个待更新文件）")}", $"solution {solution}{(files is null ? "" : $" ({Plural(files.Count, "file", "files")} to update)")}"));
             // 阶段名带解决方案名：嵌套仓库各有一个解决方案，分开看才知道慢在哪个
             var prefix = $"roslyn[{Path.GetFileNameWithoutExtension(solution)}]";
             var wall = Stopwatch.StartNew();
@@ -347,7 +350,7 @@ public static class RoslynRunner
             catch (RoslynWorkerException ex) when (runs.Count > 1)
             {
                 failures.Add($"{solution}: {ex.Message}");
-                log?.Invoke($"解决方案失败，跳过：{solution}：{ex.Message}");
+                log?.Invoke(L($"解决方案失败，跳过：{solution}：{ex.Message}", $"Solution failed, skipped: {solution}: {ex.Message}"));
             }
             finally
             {
@@ -358,7 +361,7 @@ public static class RoslynRunner
             timings.Add($"{prefix}.total", wall.Elapsed.TotalSeconds);
         }
         if (runs.Count > 0 && failures.Count == runs.Count)
-            throw new RoslynWorkerException("全部解决方案都失败：\n" + string.Join("\n", failures));
+            throw new RoslynWorkerException(L("全部解决方案都失败：\n", "All solutions failed:\n") + string.Join("\n", failures));
 
         timings.Lap("roslyn.run");
         applier.MarkMisses(Misses(db, pendingFiles, unassigned, succeeded, runs, solutions, roots, byRepository, applier.ProcessedFiles));

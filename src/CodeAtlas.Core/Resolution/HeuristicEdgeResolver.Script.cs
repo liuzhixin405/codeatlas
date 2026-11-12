@@ -330,6 +330,8 @@ public sealed partial class HeuristicEdgeResolver
     private List<NewEdge>? ResolveScript(PendingReference r, List<SymbolRecord> candidates, ScriptIndex index, IndexWriter writer)
     {
         if (r.Via == ScriptReturnsVia) return ResolveReturnHintEdge(r, index, writer);
+        // 事件频道标记（listen:x / emit:x）不建边：解析完由 EventChannelLinker 整趟配对成 via = event:x 的合成边
+        if (r.Via is { } mark && (mark.StartsWith(Storage.EventChannelLinker.ListenPrefix, StringComparison.Ordinal) || mark.StartsWith(Storage.EventChannelLinker.EmitPrefix, StringComparison.Ordinal))) return [];
         var edges = ResolveScriptBinding(r, candidates, index, writer);
         if (r.Via == ScriptCallbackVia)
             return edges?.Where(e => e.ToId is { } id && index.Symbol(id) is { Kind: SymbolKind.Function or SymbolKind.Method })

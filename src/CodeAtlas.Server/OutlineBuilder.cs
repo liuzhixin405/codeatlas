@@ -110,7 +110,7 @@ public static class OutlineBuilder
             calls.Add(new Step
             {
                 Edge = candidates.OrderBy(x => x.Edge.Id).First().Edge, Kind = "ambiguous",
-                Label = $"{candidates.Count} 个可能目标：{g.Key.Name}", Target = null, Children = children,
+                Label = L($"{candidates.Count} 个可能目标：{g.Key.Name}", $"{candidates.Count} possible targets: {g.Key.Name}"), Target = null, Children = children,
             });
         }
 

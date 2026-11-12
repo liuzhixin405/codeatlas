@@ -80,6 +80,9 @@ public static partial class FrameworkFlowBuilder
     /// <summary>前端：请求封装（axios / fetch 实例与拦截器）。</summary>
     public const string StageRequest = "request";
 
+    /// <summary>行为后置的 Note 后缀（"XxxBehavior 后置"）：<see cref="MessagePipeline"/> 按它认收尾列里的行为后置，产出与比较共用这一处。</summary>
+    internal static string BehaviorPostSuffix => L(" 后置", " (after next)");
+
     /// <summary>每个节点下最多列多少个调用，多出来的折成"还有 N 个"。</summary>
     public const int MaxChildren = 12;
     /// <summary>每个 Handler 最多列多少个入口。</summary>
@@ -183,7 +186,7 @@ public static partial class FrameworkFlowBuilder
                 "python-service" => PythonFrameworkFlow.Build(input),
                 "node-service" => NodeFrameworkFlow.Build(input),
                 "frontend" => FrontendFrameworkFlow.Build(input),
-                _ => Empty(container, ["框架流程还不认这种容器（" + container.SubKind + "）"]),
+                _ => Empty(container, [L("框架流程还不认这种容器（" + container.SubKind + "）", "Framework flow does not support this container type yet (" + container.SubKind + ")")]),
             };
 
         // ---- 边的索引（一趟）----
@@ -274,7 +277,7 @@ public static partial class FrameworkFlowBuilder
             registrations[implId] = (path, line, conditional, how);
         }
         foreach (var d in input.Di)
-            if (behaviorIds.Contains(d.ImplId) && container.Members.Any(m => Under(d.Path, m))) Register(d.ImplId, d.Path, d.Line, d.Conditional, "DI 注册");
+            if (behaviorIds.Contains(d.ImplId) && container.Members.Any(m => Under(d.Path, m))) Register(d.ImplId, d.Path, d.Line, d.Conditional, L("DI 注册", "DI registration"));
         var registrationFiles = new SortedSet<string>(StringComparer.Ordinal);
         foreach (var name in BehaviorRegistrationMethods)
             foreach (var caller in callersOfName.GetValueOrDefault(name) ?? [])
@@ -371,8 +374,8 @@ public static partial class FrameworkFlowBuilder
             if (method is null) return Node(cls.Id, ShortName(cls), cls.QualifiedName, "call", StageMiddleware, note, [], path ?? cls.Path, line ?? cls.StartLine);
             var split = SplitAtNext(method, true);
             var kids = Children(split.Pre, method.Path, StageMiddleware, null);
-            kids.AddRange(Children(split.Post, method.Path, StageMiddleware, "next 之后（后置，响应往回走时执行）"));
-            return Node(method.Id, MemberLabel(method), method.QualifiedName, "call", StageMiddleware, note + (split.Conditional ? "；有条件（有分支不调 next 直接返回）" : "") + (split.HasNext ? "" : "；没找到 next 调用"),
+            kids.AddRange(Children(split.Post, method.Path, StageMiddleware, L("next 之后（后置，响应往回走时执行）", "after next (runs on the way back with the response)")));
+            return Node(method.Id, MemberLabel(method), method.QualifiedName, "call", StageMiddleware, note + (split.Conditional ? L("；有条件（有分支不调 next 直接返回）", "; conditional (some branches return without calling next)") : "") + (split.HasNext ? "" : L("；没找到 next 调用", "; no next call found")),
                 Cap(kids, StageMiddleware), path ?? method.Path, line ?? method.StartLine);
         }
 
@@ -384,7 +387,7 @@ public static partial class FrameworkFlowBuilder
             {
                 var line = LineAt(text, call.Pos);
                 var where = $"{FileName(path)}:{line}";
-                var viaNote = via is null ? "" : $"经 {via}()；";
+                var viaNote = via is null ? "" : L($"经 {via}()；", $"via {via}(); ");
                 if (call.Name is "Run" or "RunAsync" or "Start" or "StartAsync" && via is null) break;
                 if (call.Name == "UseMiddleware")
                 {
@@ -392,9 +395,9 @@ public static partial class FrameworkFlowBuilder
                     var key = typeName is null ? null : MapBuilder.StripGenericArgs(MapBuilder.LastSegment(MapBuilder.StripGenericArgs(typeName)));
                     AddMiddlewareFile(path);
                     if (key is not null && classesByName.TryGetValue(key, out var cls))
-                        middlewareNodes.Add(MiddlewareClassNode(cls, $"{viaNote}自研中间件（UseMiddleware，{where}）", path, line));
+                        middlewareNodes.Add(MiddlewareClassNode(cls, L($"{viaNote}自研中间件（UseMiddleware，{where}）", $"{viaNote}custom middleware (UseMiddleware, {where})"), path, line));
                     else
-                        middlewareNodes.Add(Node(null, "UseMiddleware" + (key is null ? "" : $"<{key}>"), "", "external-group", StageMiddleware, $"{viaNote}中间件类不在这个容器里（{where}）", [], path, line));
+                        middlewareNodes.Add(Node(null, "UseMiddleware" + (key is null ? "" : $"<{key}>"), "", "external-group", StageMiddleware, L($"{viaNote}中间件类不在这个容器里（{where}）", $"{viaNote}middleware class is not in this container ({where})"), [], path, line));
                     continue;
                 }
                 var isUse = call.Name.StartsWith("Use", StringComparison.Ordinal);
@@ -416,19 +419,19 @@ public static partial class FrameworkFlowBuilder
                     if (endpointMaps > mapsBefore) continue;
                     if (isMap) { endpointMaps++; endpointNames.Add(call.Name); continue; }
                     AddMiddlewareFile(path);
-                    middlewareNodes.Add(Node(ext.Id, MemberLabel(ext), ext.QualifiedName, "call", StageMiddleware, $"{viaNote}仓库里的扩展方法（{where}），里面没认出中间件", [], path, line));
+                    middlewareNodes.Add(Node(ext.Id, MemberLabel(ext), ext.QualifiedName, "call", StageMiddleware, L($"{viaNote}仓库里的扩展方法（{where}），里面没认出中间件", $"{viaNote}extension method in the repo ({where}); no middleware recognized inside"), [], path, line));
                     middlewareSymbols.Add(ext);
                     continue;
                 }
                 if (isMap) { endpointMaps++; endpointNames.Add(call.Name); continue; }
                 AddMiddlewareFile(path);
-                var cond = InsideIf(text, call.Pos) ? "；在 if 里，按条件注册" : "";
+                var cond = InsideIf(text, call.Pos) ? L("；在 if 里，按条件注册", "; inside an if, registered conditionally") : "";
                 if (call.Name is "Use" or "UseWhen")
-                    middlewareNodes.Add(Node(null, call.Name == "Use" ? "Use（内联中间件）" : call.Name, call.Name, "external-group", StageMiddleware, $"{viaNote}内联中间件（{where}，lambda 写在管道配置里）{cond}", [], path, line));
+                    middlewareNodes.Add(Node(null, call.Name == "Use" ? L("Use（内联中间件）", "Use (inline middleware)") : call.Name, call.Name, "external-group", StageMiddleware, L($"{viaNote}内联中间件（{where}，lambda 写在管道配置里）{cond}", $"{viaNote}inline middleware ({where}, lambda in the pipeline configuration){cond}"), [], path, line));
                 else
                 {
                     var label = call.Name + (call.Generic is null ? "" : $"<{call.Generic}>");
-                    middlewareNodes.Add(Node(null, label, call.Name, "external-group", StageMiddleware, $"{viaNote}框架内置（{where}）{cond}", [], path, line));
+                    middlewareNodes.Add(Node(null, label, call.Name, "external-group", StageMiddleware, L($"{viaNote}框架内置（{where}）{cond}", $"{viaNote}built-in ({where}){cond}"), [], path, line));
                 }
             }
         }
@@ -503,7 +506,7 @@ public static partial class FrameworkFlowBuilder
                     || ShortName(cls).EndsWith("Middleware", StringComparison.Ordinal) && MethodNamed(cls, MiddlewareMethodNames) is { } inv && (src.Signature(inv.Id) ?? "").Contains("HttpContext", StringComparison.Ordinal);
                 if (!isMiddleware) continue;
                 middlewareOrderKnown = false;
-                middlewareNodes.Add(MiddlewareClassNode(cls, "自研中间件；没找到 UseMiddleware 注册位置，顺序未知", null, null));
+                middlewareNodes.Add(MiddlewareClassNode(cls, L("自研中间件；没找到 UseMiddleware 注册位置，顺序未知", "custom middleware; UseMiddleware registration not found, order unknown"), null, null));
             }
 
             // MVC 全局过滤器：Program / Startup / 进过的扩展方法 + 调了 AddControllers / FilterCollection 的文件
@@ -521,7 +524,7 @@ public static partial class FrameworkFlowBuilder
                     var where = $"{FileName(path)}:{LineAt(text, m.Index)}";
                     if (!classesByName.TryGetValue(key, out var cls))
                     {
-                        middlewareNodes.Add(Node(null, key, name, "external-group", StageMiddleware, $"MVC 全局过滤器（框架 / 第三方，{where}）", [], path, LineAt(text, m.Index)));
+                        middlewareNodes.Add(Node(null, key, name, "external-group", StageMiddleware, L($"MVC 全局过滤器（框架 / 第三方，{where}）", $"MVC global filter (framework / third-party, {where})"), [], path, LineAt(text, m.Index)));
                         continue;
                     }
                     if (middlewareSymbols.Any(s => s.Id == cls.Id)) continue;
@@ -529,16 +532,16 @@ public static partial class FrameworkFlowBuilder
                     var main = MethodNamed(cls, FilterMethodNames);
                     if (main is null)
                     {
-                        middlewareNodes.Add(Node(cls.Id, ShortName(cls), cls.QualifiedName, "call", StageMiddleware, $"MVC 全局过滤器（{where}）", [], path, LineAt(text, m.Index)));
+                        middlewareNodes.Add(Node(cls.Id, ShortName(cls), cls.QualifiedName, "call", StageMiddleware, L($"MVC 全局过滤器（{where}）", $"MVC global filter ({where})"), [], path, LineAt(text, m.Index)));
                         continue;
                     }
                     var split = SplitAtNext(main, false);
                     var kids = Children(split.Pre, main.Path, StageMiddleware, null);
-                    kids.AddRange(Children(split.Post, main.Path, StageMiddleware, "next 之后（动作执行完）"));
+                    kids.AddRange(Children(split.Post, main.Path, StageMiddleware, L("next 之后（动作执行完）", "after next (action executed)")));
                     foreach (var after in Methods(cls).Where(x => x.Id != main.Id && FilterAfterNames.Contains(ShortName(x))).OrderBy(x => x.StartLine))
-                        kids.Add(Node(after.Id, MemberLabel(after), after.QualifiedName, "call", StageMiddleware, ShortName(after).StartsWith("OnException", StringComparison.Ordinal) ? "出异常时" : "动作执行之后", [], after.Path, after.StartLine));
+                        kids.Add(Node(after.Id, MemberLabel(after), after.QualifiedName, "call", StageMiddleware, ShortName(after).StartsWith("OnException", StringComparison.Ordinal) ? L("出异常时", "on exception") : L("动作执行之后", "after the action executes"), [], after.Path, after.StartLine));
                     middlewareNodes.Add(Node(main.Id, MemberLabel(main), main.QualifiedName, "call", StageMiddleware,
-                        $"MVC 全局过滤器（{where}），包在控制器动作外层" + (split.Conditional ? "；有条件" : ""), Cap(kids, StageMiddleware), path, LineAt(text, m.Index)));
+                        L($"MVC 全局过滤器（{where}），包在控制器动作外层", $"MVC global filter ({where}), wraps controller actions") + (split.Conditional ? L("；有条件", "; conditional") : ""), Cap(kids, StageMiddleware), path, LineAt(text, m.Index)));
                 }
             }
         }
@@ -553,12 +556,12 @@ public static partial class FrameworkFlowBuilder
         foreach (var b in orderedBehaviors)
         {
             var method = MethodNamed(b, BehaviorMethodNames);
-            var reg = registrations.TryGetValue(b.Id, out var r) ? $"{r.How}（{FileName(r.Path)}:{r.Line}）" + (r.Conditional ? "，有条件注册" : "") : "没有注册记录，顺序不可信";
+            var reg = registrations.TryGetValue(b.Id, out var r) ? L($"{r.How}（{FileName(r.Path)}:{r.Line}）", $"{r.How} ({FileName(r.Path)}:{r.Line})") + (r.Conditional ? L("，有条件注册", ", registered conditionally") : "") : L("没有注册记录，顺序不可信", "no registration found, order unreliable");
             if (method is null) { behaviorNodes.Add(Node(b.Id, ShortName(b), b.QualifiedName, "call", StageBehavior, reg, [], b.Path, b.StartLine)); continue; }
             behaviorMethods.Add(method.Id);
             var split = SplitAtNext(method, false);
             var constraint = GenericConstraint(b);
-            var note = reg + (split.Conditional ? "；有条件（有分支直接 next() 跳过）" : "") + (constraint is null ? "" : $"；只对 {constraint} 生效") + (split.HasNext ? "" : "；没找到 next 调用");
+            var note = reg + (split.Conditional ? L("；有条件（有分支直接 next() 跳过）", "; conditional (some branches skip straight to next())") : "") + (constraint is null ? "" : L($"；只对 {constraint} 生效", $"; only applies to {constraint}")) + (split.HasNext ? "" : L("；没找到 next 调用", "; no next call found"));
             behaviorNodes.Add(Node(method.Id, MemberLabel(method), method.QualifiedName, "call", StageBehavior, note, Cap(Children(split.Pre, method.Path, StageBehavior, null), StageBehavior), method.Path, method.StartLine));
             if (split.Post.Count > 0) behaviorPost.Add((b, split.Post, method.Path));
         }
@@ -641,29 +644,32 @@ public static partial class FrameworkFlowBuilder
             var calls = Ordered(src.Calls(u.Id)).Where(Keep).ToList();
             var domainEvents = Flatten(calls).Any(c => c.Label.Contains("DomainEvent", StringComparison.Ordinal) || c.Kind == "dispatch");
             tailSymbols.Add(u);
-            return Node(u.Id, MemberLabel(u), u.QualifiedName, "call", StageTail, notePrefix + (domainEvents ? "；提交前派发领域事件" : ""),
+            return Node(u.Id, MemberLabel(u), u.QualifiedName, "call", StageTail, notePrefix + (domainEvents ? L("；提交前派发领域事件", "; dispatches domain events before commit") : ""),
                 Cap(Children(calls, u.Path, StageTail, null), StageTail), u.Path, u.StartLine);
         }
         string Reach(HashSet<long> direct, HashSet<long> all) =>
-            all.Count == direct.Count ? $"{direct.Count} 个 Handler 直接调用" : direct.Count == 0 ? $"{all.Count} 个 Handler 经服务往下调到" : $"{direct.Count} 个 Handler 直接调用、另 {all.Count - direct.Count} 个经服务往下调到";
+            all.Count == direct.Count ? L($"{direct.Count} 个 Handler 直接调用", $"{Plural(direct.Count, "handler calls", "handlers call")} it directly")
+            : direct.Count == 0 ? L($"{all.Count} 个 Handler 经服务往下调到", $"{Plural(all.Count, "handler reaches", "handlers reach")} it through services")
+            : L($"{direct.Count} 个 Handler 直接调用、另 {all.Count - direct.Count} 个经服务往下调到", $"{Plural(direct.Count, "handler calls", "handlers call")} it directly, {all.Count - direct.Count} more reach it through services");
         string CommitWho() =>
-            (anyCommit.Count >= handlerTypeTotal ? "Handler 自己提交" : "部分 Handler 自己提交")
-            + $"（{Reach(directCommit, anyCommit)}，共 {handlerTypeTotal} 个 Handler）：不是框架统一提交，没调到的 Handler 不落库或在别处提交";
+            (anyCommit.Count >= handlerTypeTotal ? L("Handler 自己提交", "Handlers commit themselves") : L("部分 Handler 自己提交", "Some handlers commit themselves"))
+            + L($"（{Reach(directCommit, anyCommit)}，共 {handlerTypeTotal} 个 Handler）：不是框架统一提交，没调到的 Handler 不落库或在别处提交",
+                $" ({Reach(directCommit, anyCommit)}; {Plural(handlerTypeTotal, "handler", "handlers")} in total): not a framework-wide commit; handlers that don't reach it don't persist or commit elsewhere");
         if (commitSets.Count == 1)
             handlerChildren.Add(CommitNode(commitSets[0].Method, CommitWho()));
         else if (commitSets.Count > 1)
         {
             var kids = commitSets.OrderByDescending(c => c.Direct.Count).ThenByDescending(c => c.All.Count).ThenBy(c => c.Method.QualifiedName, StringComparer.Ordinal)
                 .Select(c => CommitNode(c.Method, Reach(c.Direct, c.All))).ToList();
-            handlerChildren.Add(Node(null, "Handler 自己提交", "", "call", StageTail,
-                CommitWho() + $"；经 {commitSets.Count} 个提交方法（工作单元 / DbContext / 仓储的 SaveChanges*、Commit*）", Cap(kids, StageTail), null, null));
+            handlerChildren.Add(Node(null, L("Handler 自己提交", "Handlers commit themselves"), "", "call", StageTail,
+                CommitWho() + L($"；经 {commitSets.Count} 个提交方法（工作单元 / DbContext / 仓储的 SaveChanges*、Commit*）", $"; via {commitSets.Count} commit methods (SaveChanges* / Commit* on unit of work, DbContext or repositories)"), Cap(kids, StageTail), null, null));
         }
         foreach (var (target, method, count, fromHandlers) in publishers)
         {
             tailSymbols.Add(method);
             var calls = method.Kind == SymbolKind.External ? new List<FrameworkCall>() : Ordered(src.Calls(method.Id)).Where(Keep).ToList();
             handlerChildren.Add(Node(method.Id, method.Kind == SymbolKind.External ? OutlineBuilder.ExternalLabel(method.QualifiedName) : MemberLabel(method), method.QualifiedName, "call", StageTail,
-                $"事件发布：{count} 处调用，{fromHandlers} 处在 Handler 里" + (method.Id != target.Id ? $"（经接口 {ShortName(byId[target.ParentId!.Value])}）" : ""),
+                L($"事件发布：{count} 处调用，{fromHandlers} 处在 Handler 里", $"Event publishing: {Plural(count, "call site", "call sites")}, {fromHandlers} in handlers") + (method.Id != target.Id ? L($"（经接口 {ShortName(byId[target.ParentId!.Value])}）", $" (via interface {ShortName(byId[target.ParentId!.Value])})") : ""),
                 Cap(Children(calls, method.Path, StageTail, null), StageTail), method.Kind == SymbolKind.External ? null : method.Path, method.Kind == SymbolKind.External ? null : method.StartLine));
         }
         // Handler 里直接调的集成事件发布（IEventBus.PublishAsync / *IntegrationEventService / Outbox），已在行为后置里出现的不重复
@@ -677,7 +683,7 @@ public static partial class FrameworkFlowBuilder
             var n = HandlersReaching(m.Id);
             if (n == 0) continue;
             tailSymbols.Add(m);
-            handlerChildren.Add(Node(m.Id, MemberLabel(m), m.QualifiedName, "call", StageTail, $"集成事件发布：{n} 个 Handler 往下调到", [], m.Path, m.StartLine));
+            handlerChildren.Add(Node(m.Id, MemberLabel(m), m.QualifiedName, "call", StageTail, L($"集成事件发布：{n} 个 Handler 往下调到", $"Integration event publishing: reached by {Plural(n, "handler", "handlers")}"), [], m.Path, m.StartLine));
         }
 
         // ---- 入口分类 ----
@@ -775,8 +781,8 @@ public static partial class FrameworkFlowBuilder
         var consumerDispatching = consumerPairs.Select(p => p.Handler).DistinctBy(h => h.Id)
             .Count(h => reachesDispatcher.Contains(h.Id) || Methods(h).Any(m => reachesDispatcher.Contains(m.Id)));
         FlowNodeDto? consumerNode = consumerPairs.Count > 0
-            ? Node(null, "Handler", "", "handlers", StageHandler, $"消息消费：{consumerPairs.Count} 个 Handler 处理集成事件 / 消息（事件总线订阅触发，不经 HTTP 请求链）"
-                + (consumerDispatching > 0 && mainGroup.Count > 0 ? $"；其中 {consumerDispatching} 个再经分派器发命令（走上面那条分派器 → 行为链）" : ""),
+            ? Node(null, "Handler", "", "handlers", StageHandler, L($"消息消费：{consumerPairs.Count} 个 Handler 处理集成事件 / 消息（事件总线订阅触发，不经 HTTP 请求链）", $"Message consumers: {Plural(consumerPairs.Count, "handler handles", "handlers handle")} integration events / messages (triggered by event bus subscriptions, not via the HTTP request pipeline)")
+                + (consumerDispatching > 0 && mainGroup.Count > 0 ? L($"；其中 {consumerDispatching} 个再经分派器发命令（走上面那条分派器 → 行为链）", $"; {consumerDispatching} of them send commands through the dispatcher (via the dispatcher → pipeline behaviors above)") : ""),
                 handlersNode is null ? Cap(handlerChildren, StageTail) : [], null, null, consumerPairs.Count)
             : null;
 
@@ -785,7 +791,7 @@ public static partial class FrameworkFlowBuilder
             foreach (var c in post)
             {
                 if (c.TargetId is { } tid && byId.TryGetValue(tid, out var ts) && ts.Kind != SymbolKind.External) tailSymbols.Add(ts);
-                tailNodes.Add(CallNode(c, path, StageTail, $"{ShortName(b)} 后置"));
+                tailNodes.Add(CallNode(c, path, StageTail, ShortName(b) + BehaviorPostSuffix));
             }
 
         FlowNodeDto? dispatcherNode = null;
@@ -802,7 +808,7 @@ public static partial class FrameworkFlowBuilder
             var dot = ownerLabel.LastIndexOf('.');
             mainLabel = mainGroup.Count == 1 || dot < 0 ? ownerLabel
                 : ownerLabel[..dot] + "." + string.Join(" / ", ordered.Select(d => { var l = MethodLabel(d.Method); var i = l.LastIndexOf('.'); return i < 0 ? l : l[(i + 1)..]; }));
-            var perMethod = mainGroup.Count == 1 ? "" : "：" + string.Join("、", ordered.Select(d => { var l = MethodLabel(d.Method); var i = l.LastIndexOf('.'); return $"{(i < 0 ? l : l[(i + 1)..])} {d.Count}"; }));
+            var perMethod = mainGroup.Count == 1 ? "" : L("：", ": ") + string.Join(ListSep, ordered.Select(d => { var l = MethodLabel(d.Method); var i = l.LastIndexOf('.'); return $"{(i < 0 ? l : l[(i + 1)..])} {d.Count}"; }));
             foreach (var d in mainGroup) dispatcherSymbols.Add(d.Method);
             var kids = new List<FlowNodeDto>();
             var post = new List<FlowNodeDto>();
@@ -811,12 +817,12 @@ public static partial class FrameworkFlowBuilder
             {
                 var lib = method.QualifiedName["external:".Length..].Split('.')[0];
                 note = lib == "MediatR"
-                    ? $"MediatR（外部库，{mainCount} 处调用{perMethod}）：按消息类型解析 IRequestHandler，按注册顺序套上 IPipelineBehavior"
-                    : $"外部库 {lib}（{mainCount} 处调用{perMethod}）";
+                    ? L($"MediatR（外部库，{mainCount} 处调用{perMethod}）：按消息类型解析 IRequestHandler，按注册顺序套上 IPipelineBehavior", $"MediatR (external library, {Plural(mainCount, "call site", "call sites")}{perMethod}): resolves IRequestHandler by message type and wraps it in IPipelineBehavior in registration order")
+                    : L($"外部库 {lib}（{mainCount} 处调用{perMethod}）", $"External library {lib} ({Plural(mainCount, "call site", "call sites")}{perMethod})");
             }
             else
             {
-                note = $"自研分派器（{mainCount} 处调用{perMethod}{(viaInterface is null ? "" : "，经接口 " + viaInterface)}）";
+                note = L($"自研分派器（{mainCount} 处调用{perMethod}{(viaInterface is null ? "" : "，经接口 " + viaInterface)}）", $"Custom dispatcher ({Plural(mainCount, "call site", "call sites")}{perMethod}{(viaInterface is null ? "" : ", via interface " + viaInterface)})");
                 if (mainGroup.Count == 1)
                 {
                     var (pre, after) = DispatcherSteps(method);
@@ -829,7 +835,7 @@ public static partial class FrameworkFlowBuilder
                     {
                         if (d.Method.Kind == SymbolKind.External) continue;
                         var (pre, after) = DispatcherSteps(d.Method);
-                        kids.Add(Node(d.Method.Id, MemberLabel(d.Method), d.Method.QualifiedName, "call", StageDispatcher, $"{d.Count} 处调用", pre, d.Method.Path, d.Method.StartLine));
+                        kids.Add(Node(d.Method.Id, MemberLabel(d.Method), d.Method.QualifiedName, "call", StageDispatcher, L($"{d.Count} 处调用", Plural(d.Count, "call site", "call sites")), pre, d.Method.Path, d.Method.StartLine));
                         post.AddRange(after);
                     }
             }
@@ -843,7 +849,7 @@ public static partial class FrameworkFlowBuilder
             {
                 dispatcherSymbols.Add(m2);
                 secondaryDispatchers.Add(Node(m2.Id, MethodLabel(m2), m2.QualifiedName, "call", StageDispatcher,
-                    $"另一个分派方法（{c2} 处调用{(via2 is null ? "" : "，经接口 " + via2)}）", [], m2.Kind == SymbolKind.External ? null : m2.Path, m2.Kind == SymbolKind.External ? null : m2.StartLine));
+                    L($"另一个分派方法（{c2} 处调用{(via2 is null ? "" : "，经接口 " + via2)}）", $"Another dispatch method ({Plural(c2, "call site", "call sites")}{(via2 is null ? "" : ", via interface " + via2)})"), [], m2.Kind == SymbolKind.External ? null : m2.Path, m2.Kind == SymbolKind.External ? null : m2.StartLine));
             }
         }
 
@@ -867,13 +873,13 @@ public static partial class FrameworkFlowBuilder
 
         // ---- HTTP / gRPC 入口占位 ----
         var minimal = httpEntries.Count(e => e.RuleId == "aspnet.minimal");
-        var httpLabel = minimal == httpEntries.Count ? "终结点" : minimal == 0 ? "控制器" : "控制器 / 终结点";
+        var httpLabel = minimal == httpEntries.Count ? L("终结点", "Endpoints") : minimal == 0 ? L("控制器", "Controllers") : L("控制器 / 终结点", "Controllers / Endpoints");
         FlowNodeDto? httpNode = null;
         FlowNodeDto? grpcNode = null;
         string? DispatchNote(int total, int dispatching) =>
             dispatcherNode is null || total == 0 ? null
-            : dispatching == 0 ? $"这 {total} 个入口都不经分派器"
-            : dispatching < total ? $"其中 {total - dispatching} 个入口不经分派器（直接调服务），{dispatching} 个经 {mainLabel}"
+            : dispatching == 0 ? L($"这 {total} 个入口都不经分派器", total == 1 ? "This entry point does not go through the dispatcher" : $"None of these {total} entry points go through the dispatcher")
+            : dispatching < total ? L($"其中 {total - dispatching} 个入口不经分派器（直接调服务），{dispatching} 个经 {mainLabel}", $"{total - dispatching} of them bypass the dispatcher (call services directly); {dispatching} go through {mainLabel}")
             : null;
         if (isWeb && httpEntries.Count > 0)
         {
@@ -885,9 +891,9 @@ public static partial class FrameworkFlowBuilder
         {
             var kids = new List<FlowNodeDto>(GrpcInterceptorNodes());
             if (placeIn == "grpc") { kids.AddRange(chain); chainPlaced = true; }
-            grpcNode = Node(null, "gRPC 服务方法", "", "controllers", StageController,
-                (kids.Count == 0 ? "MapGrpcService 注册的服务方法，走同一条中间件管道（HTTP/2）；没有注册 gRPC 拦截器（AddGrpc 里没有 Interceptors.Add）" : "MapGrpcService 注册的服务方法，走同一条中间件管道（HTTP/2）")
-                + (DispatchNote(grpcEntries.Count, grpcDispatching) is { } dn ? "；" + dn : ""), kids, null, null, grpcEntries.Count);
+            grpcNode = Node(null, L("gRPC 服务方法", "gRPC service methods"), "", "controllers", StageController,
+                (kids.Count == 0 ? L("MapGrpcService 注册的服务方法，走同一条中间件管道（HTTP/2）；没有注册 gRPC 拦截器（AddGrpc 里没有 Interceptors.Add）", "Service methods registered via MapGrpcService go through the same middleware pipeline (HTTP/2); no gRPC interceptors registered (no Interceptors.Add in AddGrpc)") : L("MapGrpcService 注册的服务方法，走同一条中间件管道（HTTP/2）", "Service methods registered via MapGrpcService go through the same middleware pipeline (HTTP/2)"))
+                + (DispatchNote(grpcEntries.Count, grpcDispatching) is { } dn ? L("；", "; ") + dn : ""), kids, null, null, grpcEntries.Count);
         }
 
         // ---- 常驻服务 / 任务 / 消息消费 ----
@@ -904,17 +910,18 @@ public static partial class FrameworkFlowBuilder
                 if (!byId.TryGetValue(e.SymbolId, out var s)) continue;
                 var calls = s.Kind is SymbolKind.Method or SymbolKind.Function ? Ordered(src.Calls(s.Id)).Where(Keep).ToList() : [];
                 var entryKids = Cap(Children(calls, s.Path, StageController, null), StageController);
-                var note = e.Kind switch { "job" => "定时任务", "command" => "命令", _ => e.RuleId == "csharp.main" ? "程序入口（Main）" : "常驻服务" } + "：下面是它自己的关键调用";
-                if (!chainPlaced && placeIn == "hosted" && !chainOrphan && dispatcherNode is not null && Dispatches(e)) { entryKids = [.. entryKids, .. chain]; chainPlaced = true; note += "；往下调到分派器"; }
-                else if (dispatcherNode is not null && Dispatches(e)) note += $"；也经 {mainLabel}（见上）";
-                if (!consumerPlaced && IsBus(e)) { entryKids = [.. entryKids, consumerNode!]; consumerPlaced = true; note += "；消息到了按类型找 Handler"; }
+                var note = e.Kind switch { "job" => L("定时任务", "Scheduled job"), "command" => L("命令", "Command"), _ => e.RuleId == "csharp.main" ? L("程序入口（Main）", "Program entry (Main)") : L("常驻服务", "Hosted service") }
+                           + L("：下面是它自己的关键调用", ": its own key calls are listed below");
+                if (!chainPlaced && placeIn == "hosted" && !chainOrphan && dispatcherNode is not null && Dispatches(e)) { entryKids = [.. entryKids, .. chain]; chainPlaced = true; note += L("；往下调到分派器", "; reaches the dispatcher"); }
+                else if (dispatcherNode is not null && Dispatches(e)) note += L($"；也经 {mainLabel}（见上）", $"; also goes through {mainLabel} (see above)");
+                if (!consumerPlaced && IsBus(e)) { entryKids = [.. entryKids, consumerNode!]; consumerPlaced = true; note += L("；消息到了按类型找 Handler", "; incoming messages are routed to handlers by type"); }
                 var entryLabel = e.RuleId == "csharp.main" ? $"{FileName(e.File)} Main" : OutlineBuilder.IsType(s.Kind) ? ShortName(s) : MemberLabel(s);
                 kids.Add(Node(s.Id, entryLabel, s.QualifiedName, "call", StageController, note, entryKids, e.File, e.Line));
             }
             if (!consumerPlaced) { kids.Add(consumerNode!); consumerPlaced = true; }
             if (!chainPlaced && placeIn == "hosted" && chain.Count > 0) { kids.AddRange(chain); chainPlaced = true; }
-            var label = "常驻服务 / 任务" + (consumerNode is not null ? " / 消息消费" : "");
-            hostedNode = Node(null, isWeb ? label : "入口（" + label + "）", "", "controllers", StageController, null, kids, null, null, hostedEntries.Count);
+            var label = L("常驻服务 / 任务", "Hosted services / jobs") + (consumerNode is not null ? L(" / 消息消费", " / message consumers") : "");
+            hostedNode = Node(null, isWeb ? label : L("入口（" + label + "）", "Entry (" + label + ")"), "", "controllers", StageController, null, kids, null, null, hostedEntries.Count);
         }
         // 兜底（放不进去的：比如该挂常驻服务但没画常驻服务）
         if (!chainPlaced && chain.Count > 0)
@@ -935,15 +942,15 @@ public static partial class FrameworkFlowBuilder
         if (isWeb && hostedNode is not null)
         {
             // 两条路：HTTP 请求一组（中间件 → 终结点），常驻服务一组
-            rootLabel = "入口";
+            rootLabel = L("入口", "Entry");
             rootActor = StageController;
             var webActor = middlewareNodes.Count > 0 ? StageMiddleware : StageController;
-            rootChildren.Add(Node(null, "HTTP 请求", "", "entry", webActor, null, webChildren, null, null));
+            rootChildren.Add(Node(null, L("HTTP 请求", "HTTP request"), "", "entry", webActor, null, webChildren, null, null));
             rootChildren.Add(hostedNode);
         }
         else if (isWeb)
         {
-            rootLabel = "HTTP 请求";
+            rootLabel = L("HTTP 请求", "HTTP request");
             rootChildren.AddRange(webChildren);
             if (!consumerPlaced) { rootChildren.Add(consumerNode!); consumerPlaced = true; }
             if (!chainPlaced) rootChildren.AddRange(chain);
@@ -951,7 +958,7 @@ public static partial class FrameworkFlowBuilder
         }
         else
         {
-            rootLabel = "入口";
+            rootLabel = L("入口", "Entry");
             if (hostedNode is not null) rootChildren.Add(hostedNode);
             else
             {
@@ -969,85 +976,91 @@ public static partial class FrameworkFlowBuilder
         var present = new HashSet<string>(StringComparer.Ordinal);
         void Collect(FlowNodeDto n) { present.Add(n.Actor); foreach (var c in n.Children) Collect(c); }
         Collect(root);
-        if (isWeb && middlewareNodes.Count > 0) stages.Add(new FrameworkStageDto(StageMiddleware, "中间件", middlewareOrderKnown, middlewareSymbols.DistinctBy(s => s.Id).Select(Dto).ToList()));
+        if (isWeb && middlewareNodes.Count > 0) stages.Add(new FrameworkStageDto(StageMiddleware, L("中间件", "Middleware"), middlewareOrderKnown, middlewareSymbols.DistinctBy(s => s.Id).Select(Dto).ToList()));
         var shownEntries = new List<EntryPoint>();
         if (httpNode is not null) shownEntries.AddRange(httpEntries);
         if (grpcNode is not null) shownEntries.AddRange(grpcEntries);
         if (hostedNode is not null) shownEntries.AddRange(hostedEntries);
         if (shownEntries.Count > 0)
         {
-            var label = hostedNode is not null ? "入口" : grpcNode is not null && httpNode is not null ? httpLabel + " / gRPC" : grpcNode is not null ? "gRPC 服务方法" : httpLabel;
+            var label = hostedNode is not null ? L("入口", "Entry") : grpcNode is not null && httpNode is not null ? httpLabel + " / gRPC" : grpcNode is not null ? L("gRPC 服务方法", "gRPC service methods") : httpLabel;
             // 一个入口一条（同一个宿主方法上的多条 Minimal API 路由各算一条，与占位上的个数一致）
             stages.Add(new FrameworkStageDto(StageController, label, true,
                 shownEntries.Where(e => byId.ContainsKey(e.SymbolId)).Select(e => Dto(byId[e.SymbolId])).ToList()));
         }
-        if (dispatcherNode is not null) stages.Add(new FrameworkStageDto(StageDispatcher, "分派器", true, dispatcherSymbols.DistinctBy(s => s.Id).Select(Dto).ToList()));
-        if (behaviorNodes.Count > 0) stages.Add(new FrameworkStageDto(StageBehavior, "行为链", behaviorsOrdered, orderedBehaviors.Select(Dto).ToList()));
+        if (dispatcherNode is not null) stages.Add(new FrameworkStageDto(StageDispatcher, L("分派器", "Dispatcher"), true, dispatcherSymbols.DistinctBy(s => s.Id).Select(Dto).ToList()));
+        if (behaviorNodes.Count > 0) stages.Add(new FrameworkStageDto(StageBehavior, L("行为链", "Pipeline behaviors"), behaviorsOrdered, orderedBehaviors.Select(Dto).ToList()));
         if (handlersNode is not null || consumerNode is not null)
             stages.Add(new FrameworkStageDto(StageHandler, "Handler", true, handlerPairs.Select(p => Dto(HandlerMethod(p.Handler, p.Message) ?? p.Handler)).ToList()));
-        if (present.Contains(StageTail)) stages.Add(new FrameworkStageDto(StageTail, "收尾", behaviorsOrdered, tailSymbols.DistinctBy(s => s.Id).Select(Dto).ToList()));
+        if (present.Contains(StageTail)) stages.Add(new FrameworkStageDto(StageTail, L("收尾", "Teardown"), behaviorsOrdered, tailSymbols.DistinctBy(s => s.Id).Select(Dto).ToList()));
         stages = AlignStageCounts(stages, root);
         var actors = stages.Select(s => new FlowActorDto(s.Key, s.Label, "stage")).ToList();
-        if (!actors.Any(a => a.Key == root.Actor)) actors.Insert(0, new FlowActorDto(root.Actor, root.Actor == StageMiddleware ? "中间件" : "入口", "stage"));
+        if (!actors.Any(a => a.Key == root.Actor)) actors.Insert(0, new FlowActorDto(root.Actor, root.Actor == StageMiddleware ? L("中间件", "Middleware") : L("入口", "Entry"), "stage"));
 
         // ---- Notes ----
-        string Files(IEnumerable<string> paths) => string.Join("、", paths.Select(FileName).Distinct());
+        string Files(IEnumerable<string> paths) => string.Join(ListSep, paths.Select(FileName).Distinct());
         if (!isWeb)
             notes.Add(isDotnetWeb
-                ? "这个容器没有 HTTP 入口，也没认出中间件：按非 Web 容器画，入口是常驻服务 / 任务 / 消息消费"
-                : $"这个容器不是 Web 服务（{container.SubKind}，没有 HTTP / gRPC 入口，也没找到 WebApplication 的管道配置）：没有中间件与控制器阶段，入口是常驻服务 / 任务 / 消息消费");
+                ? L("这个容器没有 HTTP 入口，也没认出中间件：按非 Web 容器画，入口是常驻服务 / 任务 / 消息消费", "This container has no HTTP entry points and no recognized middleware: drawn as a non-web container; entry points are hosted services / jobs / message consumers")
+                : L($"这个容器不是 Web 服务（{container.SubKind}，没有 HTTP / gRPC 入口，也没找到 WebApplication 的管道配置）：没有中间件与控制器阶段，入口是常驻服务 / 任务 / 消息消费", $"This container is not a web service ({container.SubKind}; no HTTP / gRPC entry points and no WebApplication pipeline configuration found): no middleware or controller stages; entry points are hosted services / jobs / message consumers"));
         else
         {
             if (!isDotnetWeb)
-                notes.Add($"项目类型是 {container.SubKind}，但" + (startupFile is not null ? $" {FileName(startupFile)} 里起了 Web 宿主（WebApplication / Kestrel），" : "")
-                          + $"有 {httpEntries.Count} 个 HTTP 入口" + (grpcEntries.Count > 0 ? $"、{grpcEntries.Count} 个 gRPC 方法" : "") + "：按 Web 服务画");
-            var maps = endpointNames.Count == 0 ? "" : $"（{string.Join("、", endpointNames.GroupBy(n => n, StringComparer.Ordinal).Select(g => g.Count() > 1 ? $"{g.Key} ×{g.Count()}" : g.Key))}）";
-            if (!startupFound) notes.Add("没有找到管道配置（Program.cs 里 builder.Build() 之后的 app.UseXxx，或 Startup.Configure）");
+                notes.Add(L($"项目类型是 {container.SubKind}，但", $"Project type is {container.SubKind}, but")
+                          + (startupFile is not null ? L($" {FileName(startupFile)} 里起了 Web 宿主（WebApplication / Kestrel），", $" {FileName(startupFile)} starts a web host (WebApplication / Kestrel) and") : "")
+                          + L($"有 {httpEntries.Count} 个 HTTP 入口", $" it has {Plural(httpEntries.Count, "HTTP entry point", "HTTP entry points")}")
+                          + (grpcEntries.Count > 0 ? L($"、{grpcEntries.Count} 个 gRPC 方法", $" and {Plural(grpcEntries.Count, "gRPC method", "gRPC methods")}") : "") + L("：按 Web 服务画", ": drawn as a web service"));
+            var maps = endpointNames.Count == 0 ? "" : L("（", " (") + string.Join(ListSep, endpointNames.GroupBy(n => n, StringComparer.Ordinal).Select(g => g.Count() > 1 ? $"{g.Key} ×{g.Count()}" : g.Key)) + L("）", ")");
+            if (!startupFound) notes.Add(L("没有找到管道配置（Program.cs 里 builder.Build() 之后的 app.UseXxx，或 Startup.Configure）", "No pipeline configuration found (app.UseXxx after builder.Build() in Program.cs, or Startup.Configure)"));
             else if (middlewareNodes.Count == 0)
-                notes.Add($"{FileName(startupFile ?? "Program.cs")} 里没有 app.UseXxx：只有框架默认的中间件" + (endpointMaps > 0 ? $"（{endpointMaps} 处终结点注册{maps}，不算中间件）" : ""));
-            else notes.Add($"中间件按 {(middlewareFiles.Count > 0 ? Files(middlewareFiles) : FileName(startupFile ?? "Program.cs"))} 里 app.UseXxx 的书写顺序" + (endpointMaps > 0 ? $"；另有 {endpointMaps} 处终结点注册{maps}，不算中间件" : "")
-                           + (middlewareOrderKnown ? "" : "；有中间件类没找到注册位置，追加在最后"));
+                notes.Add(L($"{FileName(startupFile ?? "Program.cs")} 里没有 app.UseXxx：只有框架默认的中间件", $"No app.UseXxx in {FileName(startupFile ?? "Program.cs")}: only the framework's default middleware") + (endpointMaps > 0 ? L($"（{endpointMaps} 处终结点注册{maps}，不算中间件）", $" ({Plural(endpointMaps, "endpoint registration", "endpoint registrations")}{maps}, not counted as middleware)") : ""));
+            else notes.Add(L($"中间件按 {(middlewareFiles.Count > 0 ? Files(middlewareFiles) : FileName(startupFile ?? "Program.cs"))} 里 app.UseXxx 的书写顺序", $"Middleware in the order of the app.UseXxx calls in {(middlewareFiles.Count > 0 ? Files(middlewareFiles) : FileName(startupFile ?? "Program.cs"))}") + (endpointMaps > 0 ? L($"；另有 {endpointMaps} 处终结点注册{maps}，不算中间件", $"; plus {Plural(endpointMaps, "endpoint registration", "endpoint registrations")}{maps}, not counted as middleware") : "")
+                           + (middlewareOrderKnown ? "" : L("；有中间件类没找到注册位置，追加在最后", "; some middleware classes have no registration and are appended at the end")));
             if (AuthorizationNote() is { } auth) notes.Add(auth);
             var mains = containerEntries.Count(e => e.RuleId == "csharp.main");
             if (mains > 0 && hostedNode is null && hostedEntries.Count == 0)
-                notes.Add($"另有 {mains} 个程序入口（Main：宿主本身{(isDotnetWeb ? "" : "，命令行的其他子命令也从这里进")}），没画在这条请求链上");
+                notes.Add(L($"另有 {mains} 个程序入口（Main：宿主本身{(isDotnetWeb ? "" : "，命令行的其他子命令也从这里进")}），没画在这条请求链上", $"Plus {Plural(mains, "program entry", "program entries")} (Main: the host itself{(isDotnetWeb ? "" : "; other CLI subcommands also start here")}), not drawn in this request pipeline"));
             if (hostedNode is null && hostedEntries.Count > 0)
-                notes.Add($"另有 {hostedEntries.Count} 个常驻服务 / 任务入口，没画在这条请求链上" + (hostedDispatching.Count > 0 && dispatcherNode is not null ? $"（其中 {hostedDispatching.Count} 个也经 {mainLabel}）" : ""));
+                notes.Add(L($"另有 {hostedEntries.Count} 个常驻服务 / 任务入口，没画在这条请求链上", $"Plus {hostedEntries.Count} hosted service / job entry points, not drawn in this request pipeline") + (hostedDispatching.Count > 0 && dispatcherNode is not null ? L($"（其中 {hostedDispatching.Count} 个也经 {mainLabel}）", $" ({hostedDispatching.Count} of them also go through {mainLabel})") : ""));
         }
         if (hostedNode is not null)
-            notes.Add($"{hostedEntries.Count} 个常驻服务 / 任务画在「{hostedNode.Label}」下，各自列关键调用" + (isWeb && httpEntries.Count > 0 && httpDispatching == 0 && dispatcherNode is not null && !chainOrphan && placeIn == "hosted" ? $"：HTTP 的 {httpEntries.Count} 个{httpLabel}都不调分派器，真正的活在这些常驻服务里" : "")
-                      + (dispatcherNode is not null && hostedDispatching.Count > 0 ? $"；其中 {hostedDispatching.Count} 个往下调到分派器（{string.Join("、", hostedDispatching.Take(3).Select(e => byId.TryGetValue(e.SymbolId, out var s) ? (TypeOf(s.Id) is { } t ? ShortName(t) : ShortName(s)) : "?"))}）" : ""));
-        if (hubEntries.Count > 0) notes.Add($"另有 {hubEntries.Count} 个 SignalR Hub 方法（{Files(hubEntries.Select(e => e.File))}），没画");
-        if (httpNode is null && grpcNode is null && hostedNode is null) notes.Add(isWeb ? "没有发现 HTTP 入口（控制器 / Minimal API）" : "没有发现入口");
+            notes.Add(L($"{hostedEntries.Count} 个常驻服务 / 任务画在「{hostedNode.Label}」下，各自列关键调用", $"{hostedEntries.Count} hosted services / jobs drawn under \"{hostedNode.Label}\", each with its key calls") + (isWeb && httpEntries.Count > 0 && httpDispatching == 0 && dispatcherNode is not null && !chainOrphan && placeIn == "hosted" ? L($"：HTTP 的 {httpEntries.Count} 个{httpLabel}都不调分派器，真正的活在这些常驻服务里", $": none of the {httpEntries.Count} HTTP {httpLabel.ToLowerInvariant()} call the dispatcher; the real work happens in these hosted services") : "")
+                      + (dispatcherNode is not null && hostedDispatching.Count > 0 ? L($"；其中 {hostedDispatching.Count} 个往下调到分派器（", $"; {hostedDispatching.Count} of them reach the dispatcher (")
+                         + string.Join(ListSep, hostedDispatching.Take(3).Select(e => byId.TryGetValue(e.SymbolId, out var s) ? (TypeOf(s.Id) is { } t ? ShortName(t) : ShortName(s)) : "?")) + L("）", ")") : ""));
+        if (hubEntries.Count > 0) notes.Add(L($"另有 {hubEntries.Count} 个 SignalR Hub 方法（{Files(hubEntries.Select(e => e.File))}），没画", $"Plus {Plural(hubEntries.Count, "SignalR Hub method", "SignalR Hub methods")} ({Files(hubEntries.Select(e => e.File))}), not drawn"));
+        if (httpNode is null && grpcNode is null && hostedNode is null) notes.Add(isWeb ? L("没有发现 HTTP 入口（控制器 / Minimal API）", "No HTTP entry points found (controllers / Minimal API)") : L("没有发现入口", "No entry points found"));
         if (dispatcherNode is null)
-            notes.Add(handlerCount > 0 ? "没有发现分派器（没有 Send / SendAsync 一类的分发调用）：Handler 可能是入口直接调用的" : "没有发现分派器：入口直接调用服务");
+            notes.Add(handlerCount > 0 ? L("没有发现分派器（没有 Send / SendAsync 一类的分发调用）：Handler 可能是入口直接调用的", "No dispatcher found (no Send / SendAsync-style dispatch calls): handlers may be called directly by entry points") : L("没有发现分派器：入口直接调用服务", "No dispatcher found: entry points call services directly"));
         else
         {
             var (_, m0, _, _) = mainGroup[0];
-            var kind = m0.Kind == SymbolKind.External ? (m0.QualifiedName.StartsWith("external:MediatR.", StringComparison.Ordinal) ? "MediatR（外部库）" : "外部库") : "自研";
+            var kind = m0.Kind == SymbolKind.External ? (m0.QualifiedName.StartsWith("external:MediatR.", StringComparison.Ordinal) ? L("MediatR（外部库）", "MediatR (external library)") : L("外部库", "external library")) : L("自研", "custom");
             var secondary = dispatchers.Where(d => !mainGroup.Contains(d)).ToList();
-            notes.Add($"分派器：{kind} {mainLabel}，{mainCount} 处调用" + (mainGroup.Count > 1 ? $"（{string.Join("、", mainGroup.OrderByDescending(d => d.Count).Select(d => $"{MethodLabel(d.Method)} {d.Count}"))}，同一个分派器上的方法对等，并成一行）" : "")
-                      + (secondary.Count > 0 ? $"；另有 {string.Join("、", secondary.Select(d => MethodLabel(d.Method)))}" : "")
-                      + (publishers.Count > 0 ? $"；{string.Join("、", publishers.Select(p => MethodLabel(p.Method)))} 多在 Handler 里调用，算事件发布放进收尾" : ""));
+            notes.Add(L($"分派器：{kind} {mainLabel}，{mainCount} 处调用", $"Dispatcher: {kind} {mainLabel}, {Plural(mainCount, "call site", "call sites")}")
+                      + (mainGroup.Count > 1 ? L("（", " (") + string.Join(ListSep, mainGroup.OrderByDescending(d => d.Count).Select(d => $"{MethodLabel(d.Method)} {d.Count}"))
+                                               + L("，同一个分派器上的方法对等，并成一行）", "; methods on the same dispatcher are equivalent and merged into one row)") : "")
+                      + (secondary.Count > 0 ? L("；另有 ", "; also ") + string.Join(ListSep, secondary.Select(d => MethodLabel(d.Method))) : "")
+                      + (publishers.Count > 0 ? L("；", "; ") + string.Join(ListSep, publishers.Select(p => MethodLabel(p.Method)))
+                                                + L(" 多在 Handler 里调用，算事件发布放进收尾", " mostly called from handlers, treated as event publishing and placed in teardown") : ""));
             if (httpEntries.Count > 0 && httpDispatching < httpEntries.Count)
             {
                 var direct = httpEntries.Where(e => !Dispatches(e)).ToList();
                 var types = direct.Select(e => byId.TryGetValue(e.SymbolId, out var s) && TypeOf(s.Id) is { } t ? ShortName(t) : null).Where(t => t is not null).Distinct(StringComparer.Ordinal).ToList();
-                notes.Add($"{direct.Count} 个 HTTP 入口不经分派器（{DispatchReachDepth} 层内没调到 {mainLabel}，直接调服务）" + (types.Count > 0 ? $"，在 {types.Count} 个类里：{string.Join("、", types.Take(6))}{(types.Count > 6 ? " …" : "")}" : ""));
+                notes.Add(L($"{direct.Count} 个 HTTP 入口不经分派器（{DispatchReachDepth} 层内没调到 {mainLabel}，直接调服务）", $"{Plural(direct.Count, "HTTP entry point bypasses", "HTTP entry points bypass")} the dispatcher (no call to {mainLabel} within {DispatchReachDepth} levels; they call services directly)") + (types.Count > 0 ? L($"，在 {types.Count} 个类里：{string.Join(ListSep, types.Take(6))}{(types.Count > 6 ? " …" : "")}", $", in {Plural(types.Count, "class", "classes")}: {string.Join(ListSep, types.Take(6))}{(types.Count > 6 ? " …" : "")}") : ""));
             }
-            if (chainOrphan) notes.Add($"没找到哪个入口在 {DispatchReachDepth} 层内调到 {mainLabel}：分派器画在「{(placeIn == "hosted" ? hostedNode?.Label ?? "入口" : placeIn == "grpc" ? "gRPC 服务方法" : httpLabel)}」下面，实际由谁调用看调用图");
+            if (chainOrphan) notes.Add(L($"没找到哪个入口在 {DispatchReachDepth} 层内调到 {mainLabel}：分派器画在「{(placeIn == "hosted" ? hostedNode?.Label ?? "入口" : placeIn == "grpc" ? "gRPC 服务方法" : httpLabel)}」下面，实际由谁调用看调用图", $"No entry point reaches {mainLabel} within {DispatchReachDepth} levels: the dispatcher is drawn under \"{(placeIn == "hosted" ? hostedNode?.Label ?? "Entry" : placeIn == "grpc" ? "gRPC service methods" : httpLabel)}\"; see the call graph for the actual callers"));
         }
         if (consumerPairs.Count > 0)
-            notes.Add($"{consumerPairs.Count} 个 Handler 是消息消费（集成事件 / 消息队列，事件总线收到消息后按类型调用），画在" + (hostedNode is not null ? "常驻服务下" : "请求链之外") + "，不挂在 HTTP 请求链上");
-        if (behaviorTypes.Count == 0) notes.Add("没有发现行为链（没有实现 *Behavior 接口的类）");
+            notes.Add(L($"{consumerPairs.Count} 个 Handler 是消息消费（集成事件 / 消息队列，事件总线收到消息后按类型调用），画在", $"{Plural(consumerPairs.Count, "handler is a message consumer", "handlers are message consumers")} (integration events / message queues, invoked by type when the event bus receives a message), drawn ") + (hostedNode is not null ? L("常驻服务下", "under hosted services") : L("请求链之外", "outside the request pipeline")) + L("，不挂在 HTTP 请求链上", ", not on the HTTP request pipeline"));
+        if (behaviorTypes.Count == 0) notes.Add(L("没有发现行为链（没有实现 *Behavior 接口的类）", "No pipeline behaviors found (no classes implementing a *Behavior interface)"));
         else if (behaviorsOrdered)
         {
             var how = registrations.Values.Select(r => r.How).Distinct().ToList();
-            notes.Add($"行为顺序来自 {string.Join(" 与 ", how)} 的位置（{string.Join("、", registrations.Values.Select(r => FileName(r.Path)).Distinct())}）");
+            notes.Add(L($"行为顺序来自 {string.Join(L(" 与 ", " and "), how)} 的位置（{string.Join(ListSep, registrations.Values.Select(r => FileName(r.Path)).Distinct())}）", $"Behavior order comes from the positions of {string.Join(L(" 与 ", " and "), how)} ({string.Join(ListSep, registrations.Values.Select(r => FileName(r.Path)).Distinct())})"));
         }
-        else notes.Add($"{behaviorTypes.Count(b => !registrations.ContainsKey(b.Id))} 个行为没有注册记录（DI 或 AddOpenBehavior），排在最后按名字排，顺序不可信");
-        if (handlerCount == 0) notes.Add("没有发现 Handler（没有 handles 边：没有实现 I…Handler<消息> 的类）");
-        if (!present.Contains(StageTail)) notes.Add("没有发现收尾（行为 next() 之后的调用、工作单元提交、事件发布）");
+        else notes.Add(L($"{behaviorTypes.Count(b => !registrations.ContainsKey(b.Id))} 个行为没有注册记录（DI 或 AddOpenBehavior），排在最后按名字排，顺序不可信", $"{Plural(behaviorTypes.Count(b => !registrations.ContainsKey(b.Id)), "behavior has", "behaviors have")} no registration (DI or AddOpenBehavior): sorted by name at the end, order unreliable"));
+        if (handlerCount == 0) notes.Add(L("没有发现 Handler（没有 handles 边：没有实现 I…Handler<消息> 的类）", "No handlers found (no handles edges: no classes implementing I…Handler<message>)"));
+        if (!present.Contains(StageTail)) notes.Add(L("没有发现收尾（行为 next() 之后的调用、工作单元提交、事件发布）", "No teardown found (calls after a behavior's next(), unit-of-work commits, event publishing)"));
 
         // ---- Handler 清单 ----
         var handlers = BuildHandlerList(handlerPairs, handlerEntriesOf);
@@ -1076,7 +1089,7 @@ public static partial class FrameworkFlowBuilder
                 kids.Add(StripPipelineImpls(c));
             }
             if (behaviorsDropped == 0 && handlersDropped == 0) return n with { Children = kids };
-            var extra = behaviorsDropped > 0 ? $"{behaviorsDropped} 个实现按注册顺序画在下面的行为链" : $"{handlersDropped} 个实现见下面的 Handler";
+            var extra = behaviorsDropped > 0 ? L($"{behaviorsDropped} 个实现按注册顺序画在下面的行为链", $"{Plural(behaviorsDropped, "implementation", "implementations")} drawn below in the pipeline behaviors, in registration order") : L($"{handlersDropped} 个实现见下面的 Handler", $"{Plural(handlersDropped, "implementation", "implementations")}: see Handler below");
             return n with { Children = kids, Note = n.Note is null ? extra : n.Note + " · " + extra };
         }
 
@@ -1094,9 +1107,9 @@ public static partial class FrameworkFlowBuilder
                     var line = LineAt(text, m.Index);
                     var where = $"{FileName(path)}:{line}";
                     if (classesByName.TryGetValue(name, out var cls) && MethodNamed(cls, ["UnaryServerHandler", "ServerStreamingServerHandler", "ClientStreamingServerHandler", "DuplexStreamingServerHandler"]) is { } h)
-                        nodes.Add(Node(h.Id, MemberLabel(h), h.QualifiedName, "call", StageInterceptor, $"gRPC 服务端拦截器（{where}），包在每个服务方法外层",
+                        nodes.Add(Node(h.Id, MemberLabel(h), h.QualifiedName, "call", StageInterceptor, L($"gRPC 服务端拦截器（{where}），包在每个服务方法外层", $"gRPC server interceptor ({where}), wraps every service method"),
                             Cap(Children(Ordered(src.Calls(h.Id)).Where(Keep).ToList(), h.Path, StageInterceptor, null), StageInterceptor), path, line));
-                    else nodes.Add(Node(null, name, name, "external-group", StageInterceptor, $"gRPC 服务端拦截器（{where}）", [], path, line));
+                    else nodes.Add(Node(null, name, name, "external-group", StageInterceptor, L($"gRPC 服务端拦截器（{where}）", $"gRPC server interceptor ({where})"), [], path, line));
                 }
             }
             return nodes;
@@ -1123,11 +1136,11 @@ public static partial class FrameworkFlowBuilder
                 .Count(f => Text(f) is { } t && Regex.IsMatch(t, @"\[\s*Authorize\b"));
             if (sites.Count == 0 && authorizeFiles == 0) return null;
             var parts = new List<string>();
-            if (sites.Count > 0) parts.Add($"{sites.Count} 处 RequireAuthorization（{string.Join("；", sites.Distinct().Take(3))}{(sites.Count > 3 ? " …" : "")}）");
-            if (authorizeFiles > 0) parts.Add($"{authorizeFiles} 个入口文件带 [Authorize]");
+            if (sites.Count > 0) parts.Add(L($"{sites.Count} 处 RequireAuthorization（{string.Join(L("；", "; "), sites.Distinct().Take(3))}{(sites.Count > 3 ? " …" : "")}）", $"{sites.Count} × RequireAuthorization ({string.Join(L("；", "; "), sites.Distinct().Take(3))}{(sites.Count > 3 ? " …" : "")})"));
+            if (authorizeFiles > 0) parts.Add(L($"{authorizeFiles} 个入口文件带 [Authorize]", $"{Plural(authorizeFiles, "entry file has", "entry files have")} [Authorize]"));
             var hasMw = middlewareNodes.Any(n => n.Label is "UseAuthorization" or "UseAuthentication");
-            return "终结点上的授权要求：" + string.Join("，", parts) + "——在终结点执行前检查（未登录 401、没权限 403），不是单独一列"
-                   + (hasMw ? "" : "；管道里没写 UseAuthentication / UseAuthorization：.NET 7+ 的 WebApplication 在注册了认证 / 授权服务时会自动加上（路由之后、终结点之前）");
+            return L("终结点上的授权要求：", "Authorization requirements on endpoints: ") + string.Join(L("，", ", "), parts) + L("——在终结点执行前检查（未登录 401、没权限 403），不是单独一列", " — checked before the endpoint runs (401 if not signed in, 403 if not permitted); not a separate column")
+                   + (hasMw ? "" : L("；管道里没写 UseAuthentication / UseAuthorization：.NET 7+ 的 WebApplication 在注册了认证 / 授权服务时会自动加上（路由之后、终结点之前）", "; the pipeline has no UseAuthentication / UseAuthorization: on .NET 7+ WebApplication adds them automatically when authentication / authorization services are registered (after routing, before endpoints)"));
         }
 
         // 抽象方法 / 虚方法在同一文件里的重写（Dispatcher → RequestHandlerWrapper<T>.Handle → RequestHandlerWrapperImpl<…>.Handle）
@@ -1203,7 +1216,7 @@ public static partial class FrameworkFlowBuilder
                 return StripPipelineImpls(node with { Children = Cap([.. node.Children, .. extra], actor) });
             }
             var pre = calls.Take(last < 0 ? calls.Count : last + 1).Select(c => Expand(c, StageDispatcher, null)).ToList();
-            var post = last < 0 ? new List<FlowNodeDto>() : calls.Skip(last + 1).Select(c => CallNode(c, method.Path, StageTail, "分派器后置")).ToList();
+            var post = last < 0 ? new List<FlowNodeDto>() : calls.Skip(last + 1).Select(c => CallNode(c, method.Path, StageTail, L("分派器后置", "after the dispatcher"))).ToList();
             foreach (var c in calls.Skip(last + 1)) if (c.TargetId is { } id && byId.TryGetValue(id, out var ts) && ts.Kind != SymbolKind.External) tailSymbols.Add(ts);
             return (Cap(pre, StageDispatcher), post);
         }
@@ -1243,7 +1256,7 @@ public static partial class FrameworkFlowBuilder
                 var method = HandlerMethod(h, msg) ?? h;
                 var key = keys[h.Id];
                 var module = key == root ? MapBuilder.KeyLabel(root) : MapBuilder.ChildKey(root, key) is { } child ? MapBuilder.KeyLabel(child) : MapBuilder.KeyLabel(key);
-                if (module.Length == 0) module = "（全局命名空间）";
+                if (module.Length == 0) module = L("（全局命名空间）", "(global namespace)");
                 items.Add((module, new FrameworkHandlerDto(Dto(method), MessageTitle(h, msg, method), MessageKind(msg, h), entriesOf.GetValueOrDefault((h.Id, msg.Id)) ?? [])));
             }
             return items.GroupBy(i => i.Module, StringComparer.Ordinal).OrderBy(g => g.Key, StringComparer.Ordinal)
@@ -1273,7 +1286,7 @@ public static partial class FrameworkFlowBuilder
                     if (args.Count == arity && args.All(a => a.Length > 0)) return $"{name}<{string.Join(", ", args)}>";
                 }
             }
-            return $"{name}（{ShortName(handler)}）";
+            return L($"{name}（{ShortName(handler)}）", $"{name} ({ShortName(handler)})");
         }
 
         MapSymbol? HandlerMethod(MapSymbol handler, MapSymbol message)
@@ -1369,13 +1382,13 @@ public static partial class FrameworkFlowBuilder
     /// rootLabel 是时序图的起点（"HTTP 请求" / "页面加载"……）；behaviors 进 FlowDto.Behaviors（页面标题里"经…"那一行不画，框架流程自己不用）。
     /// </summary>
     internal static FrameworkFlowDto Assemble(ArchNode container, string rootLabel, FlowNodeDto root, IReadOnlyList<FrameworkStageDto> stages,
-        IReadOnlyList<FrameworkHandlerGroupDto> handlers, IReadOnlyList<string> notes, string rootActorLabel = "入口", IReadOnlyList<string>? behaviors = null)
+        IReadOnlyList<FrameworkHandlerGroupDto> handlers, IReadOnlyList<string> notes, string? rootActorLabel = null, IReadOnlyList<string>? behaviors = null)
     {
         var count = 0;
         root = Redepth(root, 0, ref count);
         stages = AlignStageCounts(stages, root);
         var actors = stages.Select(st => new FlowActorDto(st.Key, st.Label, "stage")).ToList();
-        if (!actors.Any(a => a.Key == root.Actor)) actors.Insert(0, new FlowActorDto(root.Actor, rootActorLabel, "stage"));
+        if (!actors.Any(a => a.Key == root.Actor)) actors.Insert(0, new FlowActorDto(root.Actor, rootActorLabel ?? L("入口", "Entry"), "stage"));
         var flow = new FlowDto(0, rootLabel, null, container.Key, actors, root, behaviors ?? [], count, false, null);
         return new FrameworkFlowDto(container.Key, container.Name, flow, stages, handlers, notes);
     }
@@ -1383,9 +1396,10 @@ public static partial class FrameworkFlowBuilder
     /// <summary>不是 .NET 容器 / 什么都没认出来时的结果：只有一个根。</summary>
     internal static FrameworkFlowDto Empty(ArchNode container, List<string> notes)
     {
-        var root = new FlowNodeDto(null, "入口", "", "entry", StageController, null, 1.0, 1, 0, [], 0, null);
+        var entry = L("入口", "Entry");
+        var root = new FlowNodeDto(null, entry, "", "entry", StageController, null, 1.0, 1, 0, [], 0, null);
         return new FrameworkFlowDto(container.Key, container.Name,
-            new FlowDto(0, "入口", null, container.Key, [new FlowActorDto(StageController, "入口", "stage")], root, [], 1, false, null), [], [], notes);
+            new FlowDto(0, entry, null, container.Key, [new FlowActorDto(StageController, entry, "stage")], root, [], 1, false, null), [], [], notes);
     }
 
     internal static FlowNodeDto Node(long? symbolId, string label, string qualifiedName, string kind, string actor, string? note, List<FlowNodeDto> children, string? path, int? line, int count = 1) =>
@@ -1396,7 +1410,7 @@ public static partial class FrameworkFlowBuilder
     {
         if (nodes.Count <= MaxChildren) return nodes;
         var hidden = nodes.Count - MaxChildren;
-        return [.. nodes.Take(MaxChildren), new FlowNodeDto(null, $"还有 {hidden} 个", "", "more", actor, null, 1.0, 1, 0, [], hidden, null)];
+        return [.. nodes.Take(MaxChildren), new FlowNodeDto(null, L($"还有 {hidden} 个", $"{hidden} more"), "", "more", actor, null, 1.0, 1, 0, [], hidden, null)];
     }
 
     internal static FlowNodeDto Redepth(FlowNodeDto n, int depth, ref int count)
@@ -1435,10 +1449,10 @@ public static partial class FrameworkFlowBuilder
 
     internal static string? CtxNote(string? ctx) => ctx switch
     {
-        CallContext.Cond => "条件分支里",
-        CallContext.Loop => "循环里",
-        CallContext.Catch => "catch 里（出错时）",
-        CallContext.Callback => "回调 / lambda 里",
+        CallContext.Cond => L("条件分支里", "in a conditional branch"),
+        CallContext.Loop => L("循环里", "in a loop"),
+        CallContext.Catch => L("catch 里（出错时）", "in catch (on error)"),
+        CallContext.Callback => L("回调 / lambda 里", "in a callback / lambda"),
         _ => null,
     };
 

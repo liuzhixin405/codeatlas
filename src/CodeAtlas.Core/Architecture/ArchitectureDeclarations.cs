@@ -54,7 +54,7 @@ public sealed class ArchitectureDeclarations
         var layers = Document.Layers.Select(l => l.Namespace ?? l.Name).Where(l => !string.IsNullOrWhiteSpace(l)).Select(l => l!.Trim()).ToList();
         for (var lower = 1; lower < layers.Count; lower++)
             for (var upper = 0; upper < lower; upper++)
-                rules.Add(new ArchRule(ArchRuleKind.ForbidDependency, layers[lower], ArchRuleMatch.Prefix, layers[upper], ArchRuleMatch.Prefix, RelativePath, 0, null, "yaml（layers）"));
+                rules.Add(new ArchRule(ArchRuleKind.ForbidDependency, layers[lower], ArchRuleMatch.Prefix, layers[upper], ArchRuleMatch.Prefix, RelativePath, 0, null, L("yaml（layers）", "yaml (layers)")));
         return rules;
     }
 
@@ -99,15 +99,18 @@ public sealed class ArchitectureDeclarations
                 if (d.Hide) { hidden.Add(key); continue; }
                 if (nodes.TryGetValue(key, out var existing))
                 {
-                    var renamed = d.Name is not null && d.Name != existing.Name;
+                    // 外部系统的显示名随语言（英文下"数据库（JPA）"显示为"Database (JPA)"）：声明写规范名或显示名都不算改名
+                    var renamed = d.Name is not null && d.Name != existing.Name && ExternalNames.Display(d.Name) != existing.Name;
                     var rekinded = d.Kind is not null && d.Kind != existing.SubKind;
-                    if (renamed || rekinded) conflicts.Add(new ArchConflict("declared-overrides", $"{key}：声明把 {(renamed ? $"名字 {existing.Name} 改为 {d.Name}" : "")}{(renamed && rekinded ? "，" : "")}{(rekinded ? $"种类 {existing.SubKind} 改为 {d.Kind}" : "")}"));
-                    nodes[key] = existing with { Name = d.Name ?? existing.Name, SubKind = d.Kind ?? existing.SubKind, Evidence = [.. existing.Evidence, evidence] };
+                    if (renamed || rekinded) conflicts.Add(new ArchConflict("declared-overrides", L(
+                        $"{key}：声明把 {(renamed ? $"名字 {existing.Name} 改为 {d.Name}" : "")}{(renamed && rekinded ? "，" : "")}{(rekinded ? $"种类 {existing.SubKind} 改为 {d.Kind}" : "")}",
+                        $"{key}: the declaration changes {(renamed ? $"name {existing.Name} to {d.Name}" : "")}{(renamed && rekinded ? ", " : "")}{(rekinded ? $"kind {existing.SubKind} to {d.Kind}" : "")}")));
+                    nodes[key] = existing with { Name = renamed ? d.Name! : existing.Name, SubKind = d.Kind ?? existing.SubKind, Evidence = [.. existing.Evidence, evidence] };
                 }
                 else
                 {
                     nodes[key] = new ArchNode(key, kind, d.Kind ?? defaultSubKind, d.Name ?? key, null, ArchSource.Declared, [evidence], [], []);
-                    if (kind != ArchNodeKind.Person) conflicts.Add(new ArchConflict("declared-not-found", $"{key}（{d.Name ?? key}）只有声明，静态发现不到"));
+                    if (kind != ArchNodeKind.Person) conflicts.Add(new ArchConflict("declared-not-found", L($"{key}（{d.Name ?? key}）只有声明，静态发现不到", $"{key} ({d.Name ?? key}) is only declared; not found by static discovery")));
                 }
             }
         }
@@ -119,14 +122,14 @@ public sealed class ArchitectureDeclarations
         foreach (var h in hidden)
         {
             var used = edges.Count(e => e.FromKey == h || e.ToKey == h);
-            if (used > 0) conflicts.Add(new ArchConflict("hidden-but-used", $"{h} 被声明隐藏，但有 {used} 条发现的边连着它"));
+            if (used > 0) conflicts.Add(new ArchConflict("hidden-but-used", L($"{h} 被声明隐藏，但有 {used} 条发现的边连着它", $"{h} is hidden by a declaration, but has {Plural(used, "discovered edge", "discovered edges")}")));
             nodes.Remove(h);
             edges.RemoveAll(e => e.FromKey == h || e.ToKey == h);
         }
         foreach (var r in Document.Relationships)
         {
             if (r.From is null || r.To is null) continue;
-            if (!nodes.ContainsKey(r.From) || !nodes.ContainsKey(r.To)) { conflicts.Add(new ArchConflict("declared-not-found", $"关系 {r.From} → {r.To} 的端点不存在")); continue; }
+            if (!nodes.ContainsKey(r.From) || !nodes.ContainsKey(r.To)) { conflicts.Add(new ArchConflict("declared-not-found", L($"关系 {r.From} → {r.To} 的端点不存在", $"endpoint of relationship {r.From} → {r.To} does not exist"))); continue; }
             edges.Add(new ArchEdge(r.From, r.To, r.Protocol ?? "unknown", 1.0, ArchSource.Declared, [evidence with { Note = r.Note }]));
         }
         return new ArchModel(nodes.Values.OrderBy(n => n.Kind).ThenBy(n => n.Key, StringComparer.Ordinal).ToList(),

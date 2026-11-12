@@ -18,6 +18,9 @@ public sealed class TsConstantResolver
     private static readonly string[] Extensions = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"];
     private const int MaxDepth = 40;
 
+    /// <summary>"未定义: 名字"的前缀：既是显示的原因，也是"本模块没有这个名字、接着找别处"的判据（生产与判断用同一个属性，换语言也对得上）。</summary>
+    internal static string Undefined => L("未定义: ", "undefined: ");
+
     private readonly Func<string, string?> _read;
     private readonly Func<string, bool> _exists;
     private readonly Dictionary<string, TsModule?> _modules = new(StringComparer.Ordinal);
@@ -57,12 +60,12 @@ public sealed class TsConstantResolver
     public TsResolution ResolveExpression(string file, string expression)
     {
         var m = Module(file);
-        if (m is null) return new TsResolution(null, "读不到: " + file);
+        if (m is null) return new TsResolution(null, L("读不到: ", "unreadable: ") + file);
         var tokens = TsLexer.Tokenize(expression);
         var parser = new TsParser(tokens, expression, int.MaxValue / 2);
         var i = 0;
         var expr = parser.ParseExpression(ref i);
-        if (i < tokens.Count) expr = new UnkE("复杂表达式", 0);
+        if (i < tokens.Count) expr = new UnkE(L("复杂表达式", "complex expression"), 0);
         return ToResolution(Eval(m, expr, EmptyParams, 0));
     }
 
@@ -70,7 +73,7 @@ public sealed class TsConstantResolver
     public TsResolution ResolveExport(string file, string name)
     {
         var m = Module(file);
-        return m is null ? new TsResolution(null, "读不到: " + file) : ToResolution(ExportLookup(m, name, 0));
+        return m is null ? new TsResolution(null, L("读不到: ", "unreadable: ") + file) : ToResolution(ExportLookup(m, name, 0));
     }
 
     // ───────────── 给规则用的内部接口 ─────────────
@@ -95,12 +98,12 @@ public sealed class TsConstantResolver
     /// <summary>module 的 tokens[start, end) 当一个表达式求值（调用实参、初始化表达式）。</summary>
     internal TsVal EvalTokens(TsModule m, int start, int end)
     {
-        if (end <= start) return new VFail("空表达式");
+        if (end <= start) return new VFail(L("空表达式", "empty expression"));
         var slice = m.Tokens.GetRange(start, end - start);
         var parser = new TsParser(slice, m.Text, 0);
         var i = 0;
         var expr = parser.ParseExpression(ref i);
-        if (i < slice.Count) return new VFail("复杂表达式");
+        if (i < slice.Count) return new VFail(L("复杂表达式", "complex expression"));
         return Eval(m, expr, EmptyParams, 0);
     }
 
@@ -108,10 +111,10 @@ public sealed class TsConstantResolver
     {
         VStr s => new TsResolution(s.Value, null),
         VFail f => new TsResolution(null, f.Reason),
-        VObj => new TsResolution(null, "不是字符串: 对象字面量"),
-        VFn => new TsResolution(null, "不是字符串: 函数"),
-        VAlt a => new TsResolution(null, "多个取值: " + string.Join(" | ", a.Items.Select(x => x is VStr s ? s.Value : "…"))),
-        _ => new TsResolution(null, "不是字符串: 模块"),
+        VObj => new TsResolution(null, L("不是字符串: 对象字面量", "not a string: object literal")),
+        VFn => new TsResolution(null, L("不是字符串: 函数", "not a string: function")),
+        VAlt a => new TsResolution(null, L("多个取值: ", "multiple values: ") + string.Join(" | ", a.Items.Select(x => x is VStr s ? s.Value : "…"))),
+        _ => new TsResolution(null, L("不是字符串: 模块", "not a string: module")),
     };
 
     /// <summary>值的全部字符串取值：单个字符串 → 一项；多个取值且每项都是字符串 → 各项（去重、保序）；其余 → null。</summary>
@@ -178,7 +181,7 @@ public sealed class TsConstantResolver
 
     private TsVal Eval(TsModule m, TsExpr e, IReadOnlySet<string> ps, int depth)
     {
-        if (depth > MaxDepth) return new VFail("引用过深");
+        if (depth > MaxDepth) return new VFail(L("引用过深", "reference too deep"));
         switch (e)
         {
             case StrE s: return new VStr(s.Value);
@@ -204,10 +207,10 @@ public sealed class TsConstantResolver
                 return new VStr(sb.ToString());
             }
             case RefE r: return EvalRef(m, r, ps, depth);
-            case CondE c: return Combine([c.Then, c.Else], m, ps, depth, "运算 ?");
-            case RetE r: return Combine(r.Returns, m, ps, depth, "没有返回值");
+            case CondE c: return Combine([c.Then, c.Else], m, ps, depth, L("运算 ?", "operator ?"));
+            case RetE r: return Combine(r.Returns, m, ps, depth, L("没有返回值", "no return value"));
             case IdxE x: return EvalIndex(m, x, ps, depth);
-            default: return new VFail("无法解析");
+            default: return new VFail(L("无法解析", "not resolved"));
         }
     }
 
@@ -240,13 +243,13 @@ public sealed class TsConstantResolver
             items = strings.Select(s => (TsVal)new VStr(s)).ToList();
         }
         if (items.Count == 1) return items[0];
-        return items.Count > MaxAlternatives ? new VFail($"取值过多（{items.Count} 个）") : new VAlt(items);
+        return items.Count > MaxAlternatives ? new VFail(L($"取值过多（{items.Count} 个）", $"too many values ({items.Count})")) : new VAlt(items);
     }
 
     /// <summary>TABLE[key].a.b：TABLE 是对象字面量时对每一项取 .a.b，合成多个取值；TABLE 不是对象、带展开（...）或某项取不到 → 动态下标失败。</summary>
     private TsVal EvalIndex(TsModule m, IdxE x, IReadOnlySet<string> ps, int depth)
     {
-        var fail = new VFail("动态下标: " + x.Raw);
+        var fail = new VFail(L("动态下标: ", "dynamic index: ") + x.Raw);
         var owner = Eval(m, x.Base, ps, depth + 1);
         if (owner is not VObj obj || obj.Obj.Spreads.Count > 0 || obj.Obj.Members.Count == 0) return fail;
         var items = new List<TsVal>();
@@ -272,7 +275,7 @@ public sealed class TsConstantResolver
         {
             if (cur is VFail) return cur;
             var next = Member(cur, r.Path[k], depth + 1);
-            if (next is null) return new VFail("没有成员: " + string.Join('.', r.Path.Take(k + 1)));
+            if (next is null) return new VFail(L("没有成员: ", "no member: ") + string.Join('.', r.Path.Take(k + 1)));
             cur = next;
         }
         if (!r.Called) return cur;
@@ -283,9 +286,9 @@ public sealed class TsConstantResolver
             inner.UnionWith(fn.Fn.Params);
             var result = Eval(fn.Module, body, inner, depth + 1);
             // 花括号函数体：return 里有解析不了的就还是"函数调用"（不把函数体内部的原因冒出来）
-            return body is RetE && result is VFail ? new VFail("函数调用: " + r.Raw) : result;
+            return body is RetE && result is VFail ? new VFail(L("函数调用: ", "function call: ") + r.Raw) : result;
         }
-        return new VFail("函数调用: " + r.Raw);
+        return new VFail(L("函数调用: ", "function call: ") + r.Raw);
     }
 
     /// <summary>对象 / 模块的成员；找不到返回 null（由调用方拼"没有成员"），求值失败返回 VFail。</summary>
@@ -305,7 +308,7 @@ public sealed class TsConstantResolver
                 return null;
             case VMod mod:
                 var v = ExportLookup(mod.Module, key, depth + 1);
-                return v is VFail f && f.Reason.StartsWith("未定义: ", StringComparison.Ordinal) ? null : v;
+                return v is VFail f && f.Reason.StartsWith(Undefined, StringComparison.Ordinal) ? null : v;
             case VAlt alt:
             {
                 // 多个取值（meta = TABLE[format]）再取成员 meta.endpoint：每一项都取，有一项没有这个成员就算没有
@@ -316,7 +319,7 @@ public sealed class TsConstantResolver
                     if (hit is null or VFail) return hit;
                     items.Add(hit);
                 }
-                return Alt(items, "没有成员: " + key);
+                return Alt(items, L("没有成员: ", "no member: ") + key);
             }
             default:
                 return null;
@@ -325,24 +328,24 @@ public sealed class TsConstantResolver
 
     private TsVal Lookup(TsModule m, string name, int offset, int depth)
     {
-        if (depth > MaxDepth) return new VFail("引用过深");
+        if (depth > MaxDepth) return new VFail(L("引用过深", "reference too deep"));
         if (FindDecl(m, name, offset) is { } decl) return DeclValue(m, decl, depth);
         if (m.Imports.TryGetValue(name, out var imp)) return ImportValue(m, imp, depth);
-        return new VFail("未定义: " + name);
+        return new VFail(Undefined + name);
     }
 
     private TsVal ImportValue(TsModule m, TsImport imp, int depth)
     {
         var (path, local) = ResolveModuleCore(m.File, imp.Specifier);
-        if (path is null) return new VFail((local ? "找不到模块: " : "外部包: ") + imp.Specifier);
+        if (path is null) return new VFail((local ? L("找不到模块: ", "module not found: ") : L("外部包: ", "external package: ")) + imp.Specifier);
         var target = Module(path);
-        if (target is null) return new VFail("读不到: " + path);
+        if (target is null) return new VFail(L("读不到: ", "unreadable: ") + path);
         return imp.Imported == "*" ? new VMod(target) : ExportLookup(target, imp.Imported, depth + 1);
     }
 
     private TsVal ExportLookup(TsModule m, string name, int depth)
     {
-        if (depth > MaxDepth) return new VFail("引用过深");
+        if (depth > MaxDepth) return new VFail(L("引用过深", "reference too deep"));
         if (m.LocalExportAliases.TryGetValue(name, out var original)) return Lookup(m, original, int.MaxValue, depth + 1);
         var top = m.Decls.FirstOrDefault(d => d.Name == name && d.Depth == 0);
         if (top is not null) return DeclValue(m, top, depth);
@@ -356,9 +359,9 @@ public sealed class TsConstantResolver
             if (re.Name == "*") return new VMod(target);      // export * as NS from
             if (re.Name is not null) return ExportLookup(target, re.Name, depth + 1);
             var v = ExportLookup(target, name, depth + 1);     // export * from
-            if (v is not VFail f || !f.Reason.StartsWith("未定义: ", StringComparison.Ordinal)) return v;
+            if (v is not VFail f || !f.Reason.StartsWith(Undefined, StringComparison.Ordinal)) return v;
         }
-        return new VFail("未定义: " + name);
+        return new VFail(Undefined + name);
     }
 
     private TsVal DeclValue(TsModule m, TsDecl d, int depth)
@@ -367,7 +370,7 @@ public sealed class TsConstantResolver
             return new VFn(m, m.IsIdent(d.NameIndex - 1, "function") ? new TsParser(m.Tokens, m.Text, 0).FunctionDeclaration(d.NameIndex) : new FnE([], null, d.Offset));
         var key = (m.File, d.TokenIndex);
         if (_declValues.TryGetValue(key, out var cached)) return cached;
-        if (!_evaluating.Add(key)) return new VFail("循环引用: " + d.Name);
+        if (!_evaluating.Add(key)) return new VFail(L("循环引用: ", "circular reference: ") + d.Name);
         try
         {
             var parser = new TsParser(m.Tokens, m.Text, 0);
@@ -889,7 +892,12 @@ internal sealed class TsParser(List<TsToken> tokens, string text, int offsetBias
     private string Raw(int from, int to) => from >= to || to > tokens.Count ? "" : text[tokens[from].Offset..tokens[to - 1].End].Trim();
 
     /// <summary>null / undefined 字面量：三元、return 里表示"没有地址"的分支。</summary>
-    public static bool IsAbsent(TsExpr e) => e is UnkE { Reason: "不是常量: null" or "不是常量: undefined" };
+    public static bool IsAbsent(TsExpr e) => e is UnkE u && (u.Reason == NotConstant + "null" || u.Reason == NotConstant + "undefined");
+
+    /// <summary>"不是常量: null / undefined" 的前缀：既是显示的原因，也是 <see cref="IsAbsent"/> 的判据（生产与判断用同一个属性，换语言也对得上）。</summary>
+    internal static string NotConstant => L("不是常量: ", "not a constant: ");
+
+    private static string OperatorPrefix => L("运算 ", "operator ");
 
     public TsExpr ParseExpression(ref int i)
     {
@@ -910,7 +918,7 @@ internal sealed class TsParser(List<TsToken> tokens, string text, int offsetBias
             // 条件里带运算（a === b ? X : Y、!x ? …）：同层往后找到三元的 ?，条件不求值
             if (TernaryMark(i) is var q and >= 0) { i = q; return Ternary(ref i, start); }
             SkipToTerminator(ref i);
-            return new UnkE("运算 " + op, Off(start));
+            return new UnkE(OperatorPrefix + op, Off(start));
         }
         return items.Count == 1 ? items[0] : new CatE(items, raws, Off(start));
     }
@@ -925,7 +933,7 @@ internal sealed class TsParser(List<TsToken> tokens, string text, int offsetBias
         if (!IsPunct(i, ":"))
         {
             SkipToTerminator(ref i);
-            return new UnkE("运算 ?", Off(start));
+            return new UnkE(L("运算 ?", "operator ?"), Off(start));
         }
         i++;
         var otherwise = ParseExpression(ref i);
@@ -1003,7 +1011,7 @@ internal sealed class TsParser(List<TsToken> tokens, string text, int offsetBias
                 if (nested > 0 || !IsIdent(j, "return") || IsPunct(j - 1, ".")) continue;
                 if (IsPunct(j + 1, ";") || IsPunct(j + 1, "}"))
                 {
-                    returns.Add(new UnkE("不是常量: undefined", Off(j)));
+                    returns.Add(new UnkE(TsParser.NotConstant + "undefined", Off(j)));
                     continue;
                 }
                 var k = j + 1;
@@ -1043,13 +1051,13 @@ internal sealed class TsParser(List<TsToken> tokens, string text, int offsetBias
     private TsExpr ParseUnary(ref int i)
     {
         if (IsIdent(i, "await")) i++;
-        if (i >= tokens.Count) return new UnkE("空表达式", Off(i));
+        if (i >= tokens.Count) return new UnkE(L("空表达式", "empty expression"), Off(i));
         if (IsIdent(i, "new") || IsIdent(i, "typeof") || IsPunct(i, "!") || IsPunct(i, "-"))
         {
             var what = tokens[i].Text;
             var s = Off(i);
             SkipToTerminator(ref i);
-            return new UnkE(what == "new" ? "new 表达式" : "运算 " + what, s);
+            return new UnkE(what == "new" ? L("new 表达式", "new expression") : OperatorPrefix + what, s);
         }
         return ParsePostfix(ParsePrimary(ref i), ref i);
     }
@@ -1079,13 +1087,13 @@ internal sealed class TsParser(List<TsToken> tokens, string text, int offsetBias
                 if (tok.Text is "true" or "false" or "null" or "undefined" or "this" or "function" or "class")
                 {
                     SkipToTerminator(ref i);
-                    return new UnkE("不是常量: " + tok.Text, off);
+                    return new UnkE(NotConstant + tok.Text, off);
                 }
                 return Reference(ref i);
             case TsTokKind.Punct when tok.Text == "(":
             {
                 var close = MatchClose(i);
-                if (close < 0) { i = tokens.Count; return new UnkE("括号不配对", off); }
+                if (close < 0) { i = tokens.Count; return new UnkE(L("括号不配对", "unbalanced parentheses"), off); }
                 if (IsPunct(close + 1, "=>") || (IsPunct(close + 1, ":") && ArrowAfterReturnType(close + 1) is not null))
                 {
                     var ps = Params(i + 1, close);
@@ -1097,7 +1105,7 @@ internal sealed class TsParser(List<TsToken> tokens, string text, int offsetBias
                 _ternary = 0; // 括号里自成一层，外面三元分支的 ":" 管不到
                 var inner = ParseExpression(ref i);
                 _ternary = saved;
-                if (!IsPunct(i, ")")) { i = close + 1; return new UnkE("复杂表达式", off); }
+                if (!IsPunct(i, ")")) { i = close + 1; return new UnkE(L("复杂表达式", "complex expression"), off); }
                 i++;
                 return inner;
             }
@@ -1106,11 +1114,11 @@ internal sealed class TsParser(List<TsToken> tokens, string text, int offsetBias
             {
                 var close = MatchClose(i);
                 i = close < 0 ? tokens.Count : close + 1;
-                return new UnkE("数组", off);
+                return new UnkE(L("数组", "array"), off);
             }
             default:
                 i++;
-                return new UnkE("无法解析: " + tok.Text, off);
+                return new UnkE(L("无法解析: ", "not resolved: ") + tok.Text, off);
         }
     }
 
@@ -1123,8 +1131,8 @@ internal sealed class TsParser(List<TsToken> tokens, string text, int offsetBias
             var hole = (TsTemplateHole)part;
             var sub = new TsParser(hole.Tokens, text, offsetBias);
             var j = 0;
-            var expr = hole.Tokens.Count == 0 ? new UnkE("空插值", off) : sub.ParseExpression(ref j);
-            if (j < hole.Tokens.Count) expr = new UnkE("复杂表达式", off);
+            var expr = hole.Tokens.Count == 0 ? new UnkE(L("空插值", "empty interpolation"), off) : sub.ParseExpression(ref j);
+            if (j < hole.Tokens.Count) expr = new UnkE(L("复杂表达式", "complex expression"), off);
             parts.Add(new TplHole(expr, hole.Raw));
         }
         return new TplE(parts, off);
@@ -1159,7 +1167,7 @@ internal sealed class TsParser(List<TsToken> tokens, string text, int offsetBias
                 if (close >= 0 && !IsPunct(i, "(") && !IsPunct(i, "[") && !IsPunct(i, "?."))
                     return new IdxE(new RefE(path, false, Raw(start, baseEnd), off), rest, Raw(start, i), off);
                 SkipToTerminator(ref i);
-                return new UnkE("动态下标: " + Raw(start, i), off);
+                return new UnkE(L("动态下标: ", "dynamic index: ") + Raw(start, i), off);
             }
             break;
         }
@@ -1173,7 +1181,7 @@ internal sealed class TsParser(List<TsToken> tokens, string text, int offsetBias
             if (IsPunct(i, ".") || IsPunct(i, "?.") || IsPunct(i, "[") || IsPunct(i, "("))
             {
                 SkipToTerminator(ref i);
-                return new UnkE("调用结果: " + Raw(start, i), off);
+                return new UnkE(L("调用结果: ", "call result: ") + Raw(start, i), off);
             }
         }
         var raw = called ? string.Join('.', path) + "()" : Raw(start, i);
@@ -1184,7 +1192,7 @@ internal sealed class TsParser(List<TsToken> tokens, string text, int offsetBias
     {
         var off = Off(i);
         var close = MatchClose(i);
-        if (close < 0) { i = tokens.Count; return new UnkE("花括号不配对", off); }
+        if (close < 0) { i = tokens.Count; return new UnkE(L("花括号不配对", "unbalanced braces"), off); }
         var members = new Dictionary<string, TsExpr>(StringComparer.Ordinal);
         var spreads = new List<TsExpr>();
         var saved = _ternary;

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { IndexScheduler } from "../src/indexScheduler";
+import { L } from "../webview/l10n";
 
 describe("IndexScheduler", () => {
   beforeEach(() => vi.useFakeTimers());
@@ -90,7 +91,7 @@ it("retries an index demand after the server's busy run has finished", async () 
   };
   const deps = {
     withServer: async (_root: string, action: (value: typeof client) => Promise<unknown>) => action(client),
-    log: () => {}, status: { text: "" }, ensureServer: async () => null,
+    log: () => {}, status: { text: "" }, ensureServer: async () => null, L,
     panel: { indexChanged: () => {} }, outline: null, impact: null, follow: null, lens: null,
   };
   const compiled = ts.transpileModule(declaration.getText(source), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;

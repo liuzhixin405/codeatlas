@@ -17,6 +17,11 @@ public sealed class TreeSitterIndexer(IndexDatabase db, IReadOnlyList<ILanguageA
     /// <param name="BackfillMtime">内容没变但库里的 mtime 不同或为空：补写 mtime，下次直接跳过不读。</param>
     private sealed record ParseResult(ScannedFile File, ParsedFile? Parsed, string Hash, FileStatus Status, string? Error, bool Unchanged = false, bool BackfillMtime = false);
 
+    /// <summary>扩展名 → 语言（大小写不敏感）：扫描器按它决定哪些文件进索引；启动对账（<see cref="DiskDrift"/>）用同一份。</summary>
+    public static Dictionary<string, string> ExtensionMap(IReadOnlyList<ILanguageAdapter> adapters) => adapters
+        .SelectMany(a => a.Extensions.Select(e => (Extension: e, a.LanguageId)))
+        .ToDictionary(x => x.Extension, x => x.LanguageId, StringComparer.OrdinalIgnoreCase);
+
     /// <summary>单根索引：纳入嵌套的独立克隆与子模块，不读 .codeatlas/config.json（那是 CLI / 服务用 ProjectRoots.Load 做的事）。</summary>
     public Task<IndexReport> IndexAsync(string root, IProgress<IndexProgress>? progress = null, CancellationToken ct = default) =>
         IndexAsync(ProjectRoots.Single(root), progress, ct);
@@ -32,9 +37,7 @@ public sealed class TreeSitterIndexer(IndexDatabase db, IReadOnlyList<ILanguageA
         var reader = new IndexReader(db);
         var writer = new IndexWriter(db);
         var adapterByLanguage = adapters.ToDictionary(a => a.LanguageId);
-        var extensionToLanguage = adapters
-            .SelectMany(a => a.Extensions.Select(e => (Extension: e, a.LanguageId)))
-            .ToDictionary(x => x.Extension, x => x.LanguageId, StringComparer.OrdinalIgnoreCase);
+        var extensionToLanguage = ExtensionMap(adapters);
 
         progress?.Report(new IndexProgress("scan", 0, 0, null));
         var scanned = new RepositoryScanner(extensionToLanguage, _options.ExcludedDirectories).Scan(roots).ToList();
@@ -61,7 +64,7 @@ public sealed class TreeSitterIndexer(IndexDatabase db, IReadOnlyList<ILanguageA
                     results.Add(new ParseResult(file, null, "", FileStatus.Skipped, null, Unchanged: same));
                     return;
                 }
-                if (old is { Status: FileStatus.Ok, Mtime: { } mtime } && file.Mtime != 0 && mtime == file.Mtime && old.Size == file.Size)
+                if (old is not null && FileFreshness.SameByStat(old, file.Size, file.Mtime))
                 {
                     results.Add(new ParseResult(file, null, old.Hash, FileStatus.Ok, null, Unchanged: true));
                     return;
@@ -145,6 +148,9 @@ public sealed class TreeSitterIndexer(IndexDatabase db, IReadOnlyList<ILanguageA
         timings.Lap("ts.resolve.reconcile");
         writer.ReattachDanglingEdges();
         timings.Lap("ts.resolve.reattach");
+        // 合成边：TS / JS 事件频道配对（emit('x') → on('x', handler)），整趟重算
+        new EventChannelLinker(db).Link();
+        timings.Lap("ts.resolve.synth");
         ct.ThrowIfCancellationRequested();
         batch.Commit();
         timings.Lap("ts.commit");

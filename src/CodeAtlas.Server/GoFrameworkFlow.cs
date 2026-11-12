@@ -139,10 +139,13 @@ public static partial class GoFrameworkFlow
     };
 
     /// <summary>框架 / 第三方的常见中间件在 next 之后做的事（收尾列的一行）。</summary>
+    /// <summary>没有前缀的路由组（chi 的 r.Group(func…)）在说明里的写法。</summary>
+    private static string NoPrefixGroup => L("（无前缀分组）", "(group without prefix)");
+
     private static string? KnownPost(string name) => name switch
     {
-        "Logger" or "LoggerWithConfig" or "LoggerWithFormatter" or "LoggerWithWriter" or "RequestLogger" or "RequestLoggerWithConfig" => "请求完成后写访问日志（耗时、状态码）",
-        "Recovery" or "RecoveryWithWriter" or "CustomRecovery" or "CustomRecoveryWithWriter" or "Recover" or "RecoverWithConfig" or "Recoverer" => "panic 时恢复并回 500",
+        "Logger" or "LoggerWithConfig" or "LoggerWithFormatter" or "LoggerWithWriter" or "RequestLogger" or "RequestLoggerWithConfig" => L("请求完成后写访问日志（耗时、状态码）", "writes the access log after the request completes (duration, status code)"),
+        "Recovery" or "RecoveryWithWriter" or "CustomRecovery" or "CustomRecoveryWithWriter" or "Recover" or "RecoverWithConfig" or "Recoverer" => L("panic 时恢复并回 500", "recovers from panics and responds with 500"),
         _ => null,
     };
 
@@ -335,10 +338,15 @@ public static partial class GoFrameworkFlow
             var others = entries.Count - httpEntries.Count;
             if (scans.Count == 0 && httpEntries.Count == 0)
             {
-                notes.Add("这个容器没有 HTTP 入口，也没认出 Go Web 框架（gin.Default / gin.New / echo.New / chi.NewRouter / mux.NewRouter / http.NewServeMux）：框架流程只画 HTTP 请求链");
+                notes.Add(L("这个容器没有 HTTP 入口，也没认出 Go Web 框架（gin.Default / gin.New / echo.New / chi.NewRouter / mux.NewRouter / http.NewServeMux）：框架流程只画 HTTP 请求链",
+                    "This container has no HTTP entry points and no Go web framework was recognized (gin.Default / gin.New / echo.New / chi.NewRouter / mux.NewRouter / http.NewServeMux): the framework flow only covers the HTTP request chain"));
                 // 纯 gRPC 服务（grpc.NewServer + RegisterXxxServer）：画 gRPC 这条链（拦截器 / StatsHandler → 服务方法），与别的语言一致
                 if (FrameworkFlowBuilder.GrpcOnly(input, "go", []) is { } grpcFlow) return grpcFlow;
-                if (others > 0) notes.Add($"容器里有 {others} 个非 HTTP 入口（{string.Join("、", entries.GroupBy(e => e.Kind).Select(g => $"{g.Key} {g.Count()}"))}）");
+                if (others > 0)
+                {
+                    var byKind = string.Join(ListSep, entries.GroupBy(e => e.Kind).Select(g => $"{g.Key} {g.Count()}"));
+                    notes.Add(L($"容器里有 {others} 个非 HTTP 入口（{byKind}）", $"The container has {Plural(others, "non-HTTP entry point", "non-HTTP entry points")} ({byKind})"));
+                }
                 return Empty(container, notes);
             }
 
@@ -360,14 +368,14 @@ public static partial class GoFrameworkFlow
 
             var routeNote = scan?.Fw switch
             {
-                Fw.Gin => "gin 路由树：按方法 + 路径找到处理函数（路由组的中间件在注册时已拼进各条路由的处理链）",
-                Fw.Echo => "echo 路由：按方法 + 路径找到处理函数",
-                Fw.Chi => "chi 路由树：按方法 + 路径找到处理函数",
-                Fw.Gorilla => "gorilla/mux：按注册顺序逐条匹配（路径、方法……），第一条匹配上的处理函数",
-                Fw.NetHttp => "http.ServeMux：按路径（最长前缀）找到处理函数",
-                _ => "路由：按方法 + 路径找到处理函数",
+                Fw.Gin => L("gin 路由树：按方法 + 路径找到处理函数（路由组的中间件在注册时已拼进各条路由的处理链）", "gin route tree: finds the handler by method + path (route group middleware is merged into each route's handler chain at registration)"),
+                Fw.Echo => L("echo 路由：按方法 + 路径找到处理函数", "echo router: finds the handler by method + path"),
+                Fw.Chi => L("chi 路由树：按方法 + 路径找到处理函数", "chi route tree: finds the handler by method + path"),
+                Fw.Gorilla => L("gorilla/mux：按注册顺序逐条匹配（路径、方法……），第一条匹配上的处理函数", "gorilla/mux: matches routes one by one in registration order (path, method, ...); the first match's handler runs"),
+                Fw.NetHttp => L("http.ServeMux：按路径（最长前缀）找到处理函数", "http.ServeMux: finds the handler by path (longest prefix)"),
+                _ => L("路由：按方法 + 路径找到处理函数", "Router: finds the handler by method + path"),
             };
-            var routeNode = Node(null, "路由", "", "controllers", StageController, routeNote, Cap(scan?.RouteChildren ?? [], StageController), null, null, httpEntries.Count);
+            var routeNode = Node(null, L("路由", "Routes"), "", "controllers", StageController, routeNote, Cap(scan?.RouteChildren ?? [], StageController), null, null, httpEntries.Count);
 
             // 收尾：路由组的后置 → 全局的后置（洋葱倒序）；echo 的 HTTPErrorHandler 在 echo 自己的链之后、外层包装之前
             var tail = new List<FlowNodeDto>();
@@ -387,54 +395,75 @@ public static partial class GoFrameworkFlow
             rootChildren.AddRange(tail);
 
             var stages = new List<FrameworkStageDto>();
-            if (global.Count > 0) stages.Add(new FrameworkStageDto(StageMiddleware, "中间件", true, Symbols(global)));
-            if (groups.Count > 0) stages.Add(new FrameworkStageDto(StageGroup, "路由组中间件", true, Symbols(groups)));
+            if (global.Count > 0) stages.Add(new FrameworkStageDto(StageMiddleware, L("中间件", "Middleware"), true, Symbols(global)));
+            if (groups.Count > 0) stages.Add(new FrameworkStageDto(StageGroup, L("路由组中间件", "Route group middleware"), true, Symbols(groups)));
             var bySymbol = input.Symbols.GroupBy(s => s.Id).ToDictionary(g => g.Key, g => g.First());
-            stages.Add(new FrameworkStageDto(StageController, "路由", true,
+            stages.Add(new FrameworkStageDto(StageController, L("路由", "Routes"), true,
                 httpEntries.Select(e => bySymbol.GetValueOrDefault(e.SymbolId)).Where(s => s is not null).DistinctBy(s => s!.Id).Select(s => Dto(s!)).ToList()));
             if (tail.Count > 0)
             {
                 var tailSymbols = tail.Where(n => n.SymbolId is not null).Select(n => bySymbol.GetValueOrDefault(n.SymbolId!.Value)).Where(s => s is not null && s.Kind != SymbolKind.External)
                     .DistinctBy(s => s!.Id).Select(s => Dto(s!)).ToList();
-                stages.Add(new FrameworkStageDto(StageTail, "收尾", true, tailSymbols));
+                stages.Add(new FrameworkStageDto(StageTail, L("收尾", "Teardown"), true, tailSymbols));
             }
 
             // ---- Notes ----
             if (scan is null)
-                notes.Add("没找到路由器的创建（gin.Default / gin.New / echo.New / chi.NewRouter / mux.NewRouter / http.NewServeMux），中间件没认出；只画路由占位");
+                notes.Add(L("没找到路由器的创建（gin.Default / gin.New / echo.New / chi.NewRouter / mux.NewRouter / http.NewServeMux），中间件没认出；只画路由占位",
+                    "No router creation found (gin.Default / gin.New / echo.New / chi.NewRouter / mux.NewRouter / http.NewServeMux), so middleware was not recognized; only the route placeholder is drawn"));
             else
             {
                 var where = $"{MapSymbol.FileName(scan.Path)}:{scan.Line}";
                 notes.Add(scan.Var == "http.DefaultServeMux"
-                    ? $"没有显式的路由器：处理函数注册在 http.DefaultServeMux 上（{where} 起服务）"
-                    : $"认出 {FwName(scan.Fw)}（{where} {scan.Var} := {scan.Ctor}）");
+                    ? L($"没有显式的路由器：处理函数注册在 http.DefaultServeMux 上（{where} 起服务）", $"No explicit router: handlers are registered on http.DefaultServeMux (server started at {where})")
+                    : L($"认出 {FwName(scan.Fw)}（{where} {scan.Var} := {scan.Ctor}）", $"Recognized {FwName(scan.Fw)} ({where} {scan.Var} := {scan.Ctor})"));
                 if (scans.Count > 1)
-                    notes.Add($"另有 {scans.Count - 1} 个路由器没画：{string.Join("、", scans.Where(s => !ReferenceEquals(s, scan)).Select(s => $"{FwName(s.Fw)} {MapSymbol.FileName(s.Path)}:{s.Line}"))}");
+                {
+                    var otherRouters = string.Join(ListSep, scans.Where(s => !ReferenceEquals(s, scan)).Select(s => $"{FwName(s.Fw)} {MapSymbol.FileName(s.Path)}:{s.Line}"));
+                    notes.Add(L($"另有 {scans.Count - 1} 个路由器没画：{otherRouters}", $"{Plural(scans.Count - 1, "other router", "other routers")} not drawn: {otherRouters}"));
+                }
                 if (scan.Fw == Fw.Gin)
-                    notes.Add(scan.Ctor == "gin.Default()" ? "gin.Default() 自带 Logger、Recovery 两个中间件，排在最前；它们的后置（访问日志、panic 恢复）在收尾列" : "gin.New() 不带内置中间件");
+                    notes.Add(scan.Ctor == "gin.Default()"
+                        ? L("gin.Default() 自带 Logger、Recovery 两个中间件，排在最前；它们的后置（访问日志、panic 恢复）在收尾列", "gin.Default() comes with the Logger and Recovery middleware, placed first; their after parts (access log, panic recovery) are in the teardown column")
+                        : L("gin.New() 不带内置中间件", "gin.New() has no built-in middleware"));
                 if (scan.Wraps.Count > 0)
-                    notes.Add($"{string.Join("、", scan.WrapSites.Distinct())} 手工包装 http.Handler：最后包的最先执行，实际顺序 {string.Join(" → ", scan.Wraps.Select(w => w.Node.Label))} → 路由器");
-                if (scan.Pre.Count > 0) notes.Add($"{scan.Var}.Pre 的 {scan.Pre.Count} 个在路由匹配之前执行，排在 Use 前面");
+                {
+                    var sites = string.Join(ListSep, scan.WrapSites.Distinct());
+                    var order = string.Join(" → ", scan.Wraps.Select(w => w.Node.Label));
+                    notes.Add(L($"{sites} 手工包装 http.Handler：最后包的最先执行，实际顺序 {order} → 路由器", $"{sites} wraps http.Handler by hand: the last wrapper runs first; actual order {order} → router"));
+                }
+                if (scan.Pre.Count > 0) notes.Add(L($"{scan.Var}.Pre 的 {scan.Pre.Count} 个在路由匹配之前执行，排在 Use 前面", $"{Plural(scan.Pre.Count, "middleware", "middleware")} from {scan.Var}.Pre run before route matching, ahead of Use"));
+                // gin.Default() 内置的两行：Note 以 "gin.Default()" 开头（中英文都含这个标识符），不算 Use 注册的
                 if (scan.Global.Count(m => m.Node.Note?.Contains("gin.Default()", StringComparison.Ordinal) != true) is var uses && uses > 0)
-                    notes.Add($"全局中间件按 {string.Join("、", scan.UseFiles.Select(MapSymbol.FileName))} 里 {scan.Var}.Use 的书写顺序"
-                              + (scan.Fw == Fw.Gorilla ? "；gorilla/mux 的 Use 在路由匹配上之后、处理函数之前执行（没匹配上的请求不经过）" : "")
-                              + (scan.Fw == Fw.Chi ? "；chi 要求 Use 写在所有路由之前，对整个路由器生效" : ""));
+                {
+                    var useFiles = string.Join(ListSep, scan.UseFiles.Select(MapSymbol.FileName));
+                    notes.Add(L($"全局中间件按 {useFiles} 里 {scan.Var}.Use 的书写顺序", $"Global middleware follows the order of {scan.Var}.Use in {useFiles}")
+                              + (scan.Fw == Fw.Gorilla ? L("；gorilla/mux 的 Use 在路由匹配上之后、处理函数之前执行（没匹配上的请求不经过）", "; gorilla/mux runs Use after a route matches and before the handler (unmatched requests skip it)") : "")
+                              + (scan.Fw == Fw.Chi ? L("；chi 要求 Use 写在所有路由之前，对整个路由器生效", "; chi requires Use before all routes and applies it to the whole router") : ""));
+                }
                 else if (scan.Global.Count > 0)
-                    notes.Add($"没有 {scan.Var}.Use：全局中间件只有 gin.Default() 内置的 Logger、Recovery");
+                    notes.Add(L($"没有 {scan.Var}.Use：全局中间件只有 gin.Default() 内置的 Logger、Recovery", $"No {scan.Var}.Use: the only global middleware is gin.Default()'s built-in Logger and Recovery"));
                 else if (scan.Wraps.Count == 0 && scan.Pre.Count == 0)
-                    notes.Add(scan.Var == "http.DefaultServeMux" ? "没有发现全局中间件（ListenAndServe 的 handler 没有包装）" : $"没有发现全局中间件（没有 {scan.Var}.Use，也没有包装 http.Handler）");
+                    notes.Add(scan.Var == "http.DefaultServeMux"
+                        ? L("没有发现全局中间件（ListenAndServe 的 handler 没有包装）", "No global middleware found (the ListenAndServe handler is not wrapped)")
+                        : L($"没有发现全局中间件（没有 {scan.Var}.Use，也没有包装 http.Handler）", $"No global middleware found (no {scan.Var}.Use and no wrapped http.Handler)"));
                 if (groups.Count > 0)
-                    notes.Add($"路由组中间件 {groups.Count} 个，只作用于各自的前缀（{string.Join("、", scan.GroupPrefixes.Distinct())}），见每行说明"
-                              + (scan.Fw == Fw.Gin ? "；gin 的 Use 只对这行之后注册的路由生效" : ""));
+                {
+                    var prefixes = string.Join(ListSep, scan.GroupPrefixes.Distinct());
+                    notes.Add(L($"路由组中间件 {groups.Count} 个，只作用于各自的前缀（{prefixes}），见每行说明", $"{Plural(groups.Count, "route group middleware", "route group middleware")}, each applying only to its own prefix ({prefixes}); see each row's note")
+                              + (scan.Fw == Fw.Gin ? L("；gin 的 Use 只对这行之后注册的路由生效", "; gin's Use only applies to routes registered after that line") : ""));
+                }
             }
-            if (httpEntries.Count == 0) notes.Add("没有发现 HTTP 入口（处理函数注册）：路由占位的数量是 0");
-            if (others > 0) notes.Add($"另有 {others} 个非 HTTP 入口（main / 任务 / 消息消费……），没画在这条请求链上");
-            notes.Add(tail.Count > 0 ? "收尾 = 各中间件 next 之后（含 defer）的调用与框架的兜底，按洋葱倒序（后注册的先回来）" : "没有发现收尾（中间件 next 之后 / defer 里没有调用）");
-            notes.Add("路由级中间件（r.GET(path, mw, handler)、chi 的 r.With）没画");
+            if (httpEntries.Count == 0) notes.Add(L("没有发现 HTTP 入口（处理函数注册）：路由占位的数量是 0", "No HTTP entry points (handler registrations) found: the route placeholder count is 0"));
+            if (others > 0) notes.Add(L($"另有 {others} 个非 HTTP 入口（main / 任务 / 消息消费……），没画在这条请求链上", $"{Plural(others, "other non-HTTP entry point", "other non-HTTP entry points")} (main / jobs / message consumers ...) not drawn on this request chain"));
+            notes.Add(tail.Count > 0
+                ? L("收尾 = 各中间件 next 之后（含 defer）的调用与框架的兜底，按洋葱倒序（后注册的先回来）", "Teardown = calls after next (including defer) in each middleware plus the framework's fallbacks, in reverse onion order (last registered returns first)")
+                : L("没有发现收尾（中间件 next 之后 / defer 里没有调用）", "No teardown found (no calls after next / in defer in middleware)"));
+            notes.Add(L("路由级中间件（r.GET(path, mw, handler)、chi 的 r.With）没画", "Route-level middleware (r.GET(path, mw, handler), chi's r.With) is not drawn"));
 
             var rootActor = stages[0].Key;
-            var root = Node(null, "HTTP 请求", "", "entry", rootActor, null, rootChildren, null, null);
-            return FrameworkFlowBuilder.Assemble(container, "HTTP 请求", root, stages, [], notes, "入口");
+            var root = Node(null, L("HTTP 请求", "HTTP request"), "", "entry", rootActor, null, rootChildren, null, null);
+            return FrameworkFlowBuilder.Assemble(container, L("HTTP 请求", "HTTP request"), root, stages, [], notes, L("入口", "Entry"));
         }
 
         private List<SymbolDto> Symbols(IEnumerable<Mw> mws) => mws.Where(m => m.Symbol is not null).Select(m => m.Symbol!).DistinctBy(s => s.Id).Select(Dto).ToList();
@@ -445,8 +474,8 @@ public static partial class GoFrameworkFlow
             foreach (var name in new[] { "Logger", "Recovery" })
             {
                 var label = $"gin.{name}()";
-                var post = new List<FlowNodeDto> { Node(null, label, "external:gin." + name, "external-group", StageTail, $"gin.{name} 后置：{KnownPost(name)}（gin.Default() 内置）", [], path, line) };
-                cur.Global.Add(new Mw(Node(null, label, "external:gin." + name, "external-group", StageMiddleware, $"gin.Default() 内置（{where}）", [], path, line), post, null));
+                var post = new List<FlowNodeDto> { Node(null, label, "external:gin." + name, "external-group", StageTail, L($"gin.{name} 后置：{KnownPost(name)}（gin.Default() 内置）", $"gin.{name} after: {KnownPost(name)} (gin.Default() built-in)"), [], path, line) };
+                cur.Global.Add(new Mw(Node(null, label, "external:gin." + name, "external-group", StageMiddleware, L($"gin.Default() 内置（{where}）", $"gin.Default() built-in ({where})"), [], path, line), post, null));
             }
         }
 
@@ -507,7 +536,7 @@ public static partial class GoFrameworkFlow
                             if (LhsOf(t, m.Index) is { } lhs) vars[lhs] = group;
                             Add(created, router.Var, (pos, prefix));
                             foreach (var (s, e) in args.Skip(1))
-                                AddMiddleware(t, path, s, e, group, scopeFn, $"{recv}.Group 的参数", where, line, false, null);
+                                AddMiddleware(t, path, s, e, group, scopeFn, L($"{recv}.Group 的参数", $"{recv}.Group arguments"), where, line, false, null);
                             break;
                         }
                         case "Group" when router.Fw == Fw.Chi && args.Count > 0 && code[args[0].Start..].StartsWith("func", StringComparison.Ordinal):
@@ -563,9 +592,14 @@ public static partial class GoFrameworkFlow
             }
             if (before.Count == 0 && direct == 0) return null;
             var parts = before.Select(g => DescribeGroup(t, path, g.Pos, g.Prefix)).ToList();
-            if (direct > 0) parts.Add($"{direct} 条直接注册在 {router.Var} 上的路由");
-            var text = $"gin 的 Use 只对这行之后建的组 / 注册的路由生效：之前的 {string.Join("、", parts)} 不经过";
-            if (after.Count > 0) text += $"；之后的 {string.Join("、", after.Select(g => DescribeGroup(t, path, g.Pos, g.Prefix)))} 经过";
+            if (direct > 0) parts.Add(L($"{direct} 条直接注册在 {router.Var} 上的路由", $"{Plural(direct, "route", "routes")} registered directly on {router.Var}"));
+            var beforeList = string.Join(ListSep, parts);
+            var text = L($"gin 的 Use 只对这行之后建的组 / 注册的路由生效：之前的 {beforeList} 不经过", $"gin's Use only applies to groups / routes created after this line: the earlier {beforeList} skip it");
+            if (after.Count > 0)
+            {
+                var afterList = string.Join(ListSep, after.Select(g => DescribeGroup(t, path, g.Pos, g.Prefix)));
+                text += L($"；之后的 {afterList} 经过", $"; the later {afterList} go through it");
+            }
             return text;
         }
 
@@ -577,9 +611,9 @@ public static partial class GoFrameworkFlow
             if (!m.Success || Keywords.Contains(m.Groups["fn"].Value)) return prefix;
             var callee = m.Groups["fn"].Value;
             var (qualifier, name) = SplitCallee(callee);
-            if (ResolveFunc(qualifier, name, path, t) is not { } fn) return $"{name}（{prefix}）";
+            if (ResolveFunc(qualifier, name, path, t) is not { } fn) return L($"{name}（{prefix}）", $"{name} ({prefix})");
             var n = input.Entries.Count(e => e.ContainerKey == container.Key && e.Kind == "http" && e.File == fn.Path && e.Line >= fn.StartLine && e.Line <= fn.EndLine);
-            return n > 0 ? $"{name}（{prefix}，{n} 条路由）" : $"{name}（{prefix}）";
+            return n > 0 ? L($"{name}（{prefix}，{n} 条路由）", $"{name} ({prefix}, {Plural(n, "route", "routes")})") : L($"{name}（{prefix}）", $"{name} ({prefix})");
         }
 
         private static string? LhsOf(GoText t, int pos)
@@ -643,7 +677,9 @@ public static partial class GoFrameworkFlow
             var expr = code[s..e].Trim();
             var isError = member == "HTTPErrorHandler";
             var stage = isError ? StageTail : StageController;
-            var note = isError ? $"处理函数返回 error 时（{router.Var}.HTTPErrorHandler，{where}）" : $"没匹配上路由时（{router.Var}.{member}，{where}）";
+            var note = isError
+                ? L($"处理函数返回 error 时（{router.Var}.HTTPErrorHandler，{where}）", $"When a handler returns an error ({router.Var}.HTTPErrorHandler, {where})")
+                : L($"没匹配上路由时（{router.Var}.{member}，{where}）", $"When no route matches ({router.Var}.{member}, {where})");
             FlowNodeDto node;
             var lc = LeadingCallee().Match(expr);
             // http.HandlerFunc(notFound) 是类型转换：看里面那个
@@ -733,7 +769,7 @@ public static partial class GoFrameworkFlow
             {
                 var where = $"{MapSymbol.FileName(path)}:{line}";
                 var (q, n) = SplitCallee(callee);
-                var note = $"包在路由器外面的 http.Handler（{where}）";
+                var note = L($"包在路由器外面的 http.Handler（{where}）", $"http.Handler wrapped around the router ({where})");
                 MapSymbol? fn = null;
                 if (isStruct)
                 {
@@ -797,10 +833,11 @@ public static partial class GoFrameworkFlow
         private void AddMiddleware(GoText t, string path, int s, int e, Router router, MapSymbol? scopeFn, string how, string where, int line, bool pre, string? earlier)
         {
             var code = t.Code;
-            var regNote = pre ? $"{how}（{where}），路由匹配之前执行"
-                : router.Root ? $"{how}（{where}）"
-                : $"路由组 {(router.Prefix.Length == 0 ? "（无前缀分组）" : router.Prefix)}（{how}，{where}）：只作用于这个前缀下的路由";
-            if (earlier is not null) regNote += "；" + earlier;
+            var groupName = router.Prefix.Length == 0 ? NoPrefixGroup : router.Prefix;
+            var regNote = pre ? L($"{how}（{where}），路由匹配之前执行", $"{how} ({where}), runs before route matching")
+                : router.Root ? L($"{how}（{where}）", $"{how} ({where})")
+                : L($"路由组 {groupName}（{how}，{where}）：只作用于这个前缀下的路由", $"Route group {groupName} ({how}, {where}): applies only to routes under this prefix");
+            if (earlier is not null) regNote += L("；", "; ") + earlier;
             var stage = router.Root || pre ? StageMiddleware : StageGroup;
             Mw mw;
             var expr = code[s..e];
@@ -809,7 +846,7 @@ public static partial class GoFrameworkFlow
                 var calls = scopeFn is null ? new List<FrameworkCall>()
                     : Ordered(src.Calls(scopeFn.Id)).Where(c => { var p = t.PosOf(c); return p > lit.BodyOpen && p < lit.BodyClose; }).ToList();
                 var ps = ParamList(code[(lit.ParamsOpen + 1)..lit.ParamsClose]);
-                mw = AnalyzeBody(calls, scopeFn?.Path ?? path, t, lit, lit, ps, 0, null, "内联中间件", "", regNote, path, line, stage, "内联中间件");
+                mw = AnalyzeBody(calls, scopeFn?.Path ?? path, t, lit, lit, ps, 0, null, L("内联中间件", "inline middleware"), "", regNote, path, line, stage, L("内联中间件", "inline middleware"));
             }
             else
             {
@@ -827,7 +864,7 @@ public static partial class GoFrameworkFlow
             else
             {
                 cur.Groups.Add(mw);
-                cur.GroupPrefixes.Add(router.Prefix.Length == 0 ? "（无前缀分组）" : router.Prefix);
+                cur.GroupPrefixes.Add(router.Prefix.Length == 0 ? NoPrefixGroup : router.Prefix);
             }
         }
 
@@ -835,8 +872,8 @@ public static partial class GoFrameworkFlow
         {
             var name = SplitCallee(callee).Name;
             var known = KnownPost(name);
-            var node = Node(null, label, callee.Contains('.') ? "external:" + callee : callee, "external-group", stage, regNote + "；框架 / 第三方中间件", [], path, line);
-            var post = known is null ? new List<FlowNodeDto>() : [Node(null, label, "external:" + callee, "external-group", StageTail, $"{callee} 后置：{known}", [], path, line)];
+            var node = Node(null, label, callee.Contains('.') ? "external:" + callee : callee, "external-group", stage, regNote + L("；框架 / 第三方中间件", "; framework / third-party middleware"), [], path, line);
+            var post = known is null ? new List<FlowNodeDto>() : [Node(null, label, "external:" + callee, "external-group", StageTail, L($"{callee} 后置：{known}", $"{callee} after: {known}"), [], path, line)];
             return new Mw(node, post, null);
         }
 
@@ -964,18 +1001,24 @@ public static partial class GoFrameworkFlow
                 }
 
             var note = regNote;
-            if (aborts.Count > 0) note += $"；可能中断（{string.Join("、", aborts.Select(a => "c." + a))} 之后不再执行后面的处理器）";
-            if (earlyReturn) note += "；可能中断（next 之前有 return，请求不往下传）";
+            if (aborts.Count > 0)
+            {
+                var abortList = string.Join(ListSep, aborts.Select(a => "c." + a));
+                note += L($"；可能中断（{abortList} 之后不再执行后面的处理器）", $"; may short-circuit (after {abortList} the remaining handlers do not run)");
+            }
+            if (earlyReturn) note += L("；可能中断（next 之前有 return，请求不往下传）", "; may short-circuit (returns before next, so the request does not go further)");
             if (nextSpan is null)
-                note += isGin ? "；没调 c.Next()：它返回后 gin 接着执行后面的处理器，调用都算前置" : "；没找到 next 调用";
-            else if (conditional) note += "；有条件调用 next";
-            if (setup > 0) note += $"；构造时的 {setup} 个调用（启动时执行一次）不画";
+                note += isGin
+                    ? L("；没调 c.Next()：它返回后 gin 接着执行后面的处理器，调用都算前置", "; no c.Next() call: gin runs the remaining handlers after it returns, so all calls count as before")
+                    : L("；没找到 next 调用", "; no next call found");
+            else if (conditional) note += L("；有条件调用 next", "; calls next conditionally");
+            if (setup > 0) note += L($"；构造时的 {setup} 个调用（启动时执行一次）不画", $"; {Plural(setup, "construction-time call", "construction-time calls")} (run once at startup) not drawn");
 
             var kids = Dedup(pre).Select(c => CallNode(c, callsPath, stage, null)).ToList();
-            var postNodes = Dedup(post).Select(c => CallNode(c, callsPath, StageTail, $"{owner} 后置")).ToList();
+            var postNodes = Dedup(post).Select(c => CallNode(c, callsPath, StageTail, L($"{owner} 后置", $"{owner} after"))).ToList();
             // defer 按后进先出执行
             foreach (var group in deferred.GroupBy(d => d.Index).OrderByDescending(g => g.Key))
-                postNodes.AddRange(Dedup(group.Select(g => g.Call).ToList()).Select(c => CallNode(c, callsPath, StageTail, $"{owner} 后置（defer）")));
+                postNodes.AddRange(Dedup(group.Select(g => g.Call).ToList()).Select(c => CallNode(c, callsPath, StageTail, L($"{owner} 后置（defer）", $"{owner} after (defer)"))));
             var node = Node(fn?.Id, label, qn, fn is null ? "external-group" : "call", stage, note, Cap(kids, stage), regPath ?? fn?.Path, regLine ?? fn?.StartLine);
             return new Mw(node, postNodes, fn);
         }

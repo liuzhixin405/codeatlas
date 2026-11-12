@@ -98,7 +98,7 @@ public static partial class RoslynAnalyzer
         {
             ct.ThrowIfCancellationRequested();
             var compilation = await project.GetCompilationAsync(ct);
-            if (compilation is null) { errors++; emit(new ErrorRec(project.Name, "没有拿到编译")); continue; }
+            if (compilation is null) { errors++; emit(new ErrorRec(project.Name, L("没有拿到编译", "No compilation available"))); continue; }
             compilations.Add((project, compilation));
         }
         Lap("compile");

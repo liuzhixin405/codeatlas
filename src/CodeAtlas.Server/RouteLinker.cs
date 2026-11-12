@@ -565,9 +565,9 @@ public static partial class RouteLinker
             {
                 edges.RemoveAt(idx);
                 var c = edges.FindIndex(e => e.FromKey == g.Key.ContainerKey && e.ToKey == to[0] && e.Protocol == "http");
-                if (c >= 0) edges[c] = edges[c] with { Evidence = [.. edges[c].Evidence, new Evidence(ArchitectureDeclarations.RelativePath, null, $"{total - matched}/{total} 处对不上后端路由")] };
+                if (c >= 0) edges[c] = edges[c] with { Evidence = [.. edges[c].Evidence, new Evidence(ArchitectureDeclarations.RelativePath, null, L($"{total - matched}/{total} 处对不上后端路由", $"{total - matched}/{total} call sites do not match a backend route"))] };
             }
-            else edges[idx] = edges[idx] with { Evidence = [.. edges[idx].Evidence, new Evidence(ArchitectureDeclarations.RelativePath, null, $"{matched}/{total} 处已对上路由")] };
+            else edges[idx] = edges[idx] with { Evidence = [.. edges[idx].Evidence, new Evidence(ArchitectureDeclarations.RelativePath, null, L($"{matched}/{total} 处已对上路由", $"{matched}/{total} call sites matched a route"))] };
         }
         var referenced = edges.SelectMany(e => new[] { e.FromKey, e.ToKey }).ToHashSet(StringComparer.Ordinal);
         nodes.RemoveAll(n => n.Kind == ArchNodeKind.External && !referenced.Contains(n.Key));

@@ -1,3 +1,4 @@
+using CodeAtlas.Core.Storage;
 using CodeAtlas.Core.Model;
 using CodeAtlas.Core.Resolution;
 using TreeSitter;
@@ -572,21 +573,27 @@ public abstract partial class ScriptAdapterBase
             foreach (var c in node.NamedChildren)
             {
                 if (c.Type == "arguments" && node.Type is "call_expression" or "new_expression" && !IsSkippedCall(node))
-                    foreach (var arg in c.NamedChildren) Passed(arg, 0);
+                {
+                    // emitter.on('x', handler)：第二个实参的回调另记一条频道标记，emitter.emit('x') 记发出标记（见 EventChannelLinker）
+                    var channel = node.Type == "call_expression" ? EventChannel(node, ListenMethods) : null;
+                    var i = 0;
+                    foreach (var arg in c.NamedChildren) Passed(arg, 0, i++ == 1 ? channel : null);
+                    if (node.Type == "call_expression" && EventChannel(node, EmitMethods) is { } emitted) Emit(node, emitted);
+                }
                 if (c.Type is "string" or "template_string" or "comment") continue;
                 Walk(c, depth + 1);
             }
         }
 
-        void Passed(Node value, int level)
+        void Passed(Node value, int level, string? channel = null)
         {
             switch (value.Type)
             {
                 case "identifier":
-                    Add(value, value.Text, IsPassableFunction(value, bindings) ? NameBinding(value, bindings) : null);
+                    Add(value, value.Text, IsPassableFunction(value, bindings) ? NameBinding(value, bindings) : null, channel);
                     break;
                 case "member_expression" when value.GetChildForField("object") is { Type: "this" } && value.GetChildForField("property") is { Type: "property_identifier" or "private_property_identifier" } prop:
-                    Add(prop, prop.Text, ThisBinding(prop, bindings));
+                    Add(prop, prop.Text, ThisBinding(prop, bindings), channel);
                     break;
                 case "object" when level < 3:
                     foreach (var entry in value.NamedChildren)
@@ -595,14 +602,47 @@ public abstract partial class ScriptAdapterBase
             }
         }
 
-        void Add(Node nameNode, string name, ScriptBinding? binding)
+        void Add(Node nameNode, string name, ScriptBinding? binding, string? channel)
         {
             if (binding is null) return;
             var line = nameNode.StartPosition.Row + 1;
             var from = EnclosingIndex(ranges, (line, nameNode.StartPosition.Column + 1));
+            // 频道标记与回调引用同一个 pos：EventChannelLinker 按 (from, pos) 找到回调边解析出的处理函数
+            if (channel is not null)
+                into.Add(new ParsedReference(from, name, EdgeKind.Calls, line, nameNode.StartPosition.Column + 1, EventChannelLinker.ListenPrefix + channel, binding, CallContext.Callback, nameNode.StartIndex));
             if (!existing.Add((from, name, EdgeKind.Calls, line))) return;
             into.Add(new ParsedReference(from, name, EdgeKind.Calls, line, nameNode.StartPosition.Column + 1, CallbackVia, binding, CallContext.Callback, nameNode.StartIndex));
         }
+
+        void Emit(Node call, string channel)
+        {
+            var name = call.GetChildForField("function")!.GetChildForField("property")!;
+            var line = name.StartPosition.Row + 1;
+            var from = EnclosingIndex(ranges, (line, name.StartPosition.Column + 1));
+            into.Add(new ParsedReference(from, name.Text, EdgeKind.Calls, line, name.StartPosition.Column + 1, EventChannelLinker.EmitPrefix + channel,
+                new ScriptBinding(ScriptReceiver.Other), null, name.StartIndex));
+        }
+    }
+
+    private static readonly HashSet<string> ListenMethods = new(StringComparer.Ordinal) { "on", "once", "addListener", "prependListener", "prependOnceListener", "addEventListener" };
+    private static readonly HashSet<string> EmitMethods = new(StringComparer.Ordinal) { "emit" };
+
+    /// <summary>
+    /// x.on('频道', …) / x.emit('频道', …)：方法名在 methods 里、调用写成成员调用、第一个实参是不带插值的字符串字面量时返回频道名，否则 null。
+    /// 裸调用 emit('x')（Vue 的 defineEmits）不算：它对的是父组件模板里的 @x，不是同名的 on。
+    /// </summary>
+    private static string? EventChannel(Node call, HashSet<string> methods)
+    {
+        if (call.GetChildForField("function") is not { Type: "member_expression" } fn || fn.GetChildForField("property")?.Text is not { } m || !methods.Contains(m)) return null;
+        if (call.GetChildForField("arguments")?.NamedChildren.FirstOrDefault() is not { } first) return null;
+        if (first.Type == "string")
+        {
+            var text = first.Text;
+            return text.Length >= 2 ? EventChannelLinker.NormalizeChannel(text[1..^1]) : null;
+        }
+        if (first.Type == "template_string" && !first.NamedChildren.Any(c => c.Type == "template_substitution"))
+            return EventChannelLinker.NormalizeChannel(first.Text.Trim('`'));
+        return null;
     }
 
     /// <summary>

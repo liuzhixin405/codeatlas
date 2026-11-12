@@ -119,7 +119,7 @@ public sealed record SymbolLensDto(SymbolDto Symbol, int Callers, int CallSites,
 /// <param name="Nodes">单元：中心（Distance 0）、与中心直接相连的（1），depth=2 时再往外一层（2）。</param>
 /// <param name="Edges">单元之间的汇总边（有向：From 依赖 To）。</param>
 /// <param name="Truncated">节点超过上限（RelationsBuilder.MaxNodes）被截断：按与中心之间的边权重保留前若干个。</param>
-public sealed record RelationsDto(SymbolDto Focus, IReadOnlyList<RelationComponentDto> Components, IReadOnlyList<RelationNodeDto> Nodes, IReadOnlyList<RelationEdgeDto> Edges, bool Truncated);
+public sealed record RelationsDto(SymbolDto Focus, IReadOnlyList<RelationComponentDto> Components, IReadOnlyList<RelationNodeDto> Nodes, IReadOnlyList<RelationEdgeDto> Edges, bool Truncated, IReadOnlyList<string>? StaleFiles = null);
 
 /// <param name="Key">组件键（与 DSM 的组件键同一套：容器成员项目 / 命名空间段 / 前端目录）。</param>
 /// <param name="Label">显示名。</param>
@@ -157,7 +157,7 @@ public sealed record RelationSampleDto(string FromLabel, string ToLabel, string 
 /// <param name="EntriesTruncated">往上走超过 ImpactBuilder 的步数 / 节点上限被截断，入口可能不全。</param>
 /// <param name="TestCallers">被多少个测试代码里的方法直接调用（tests=false 时它们不出现在 Callers 里，只计数）。</param>
 /// <param name="Truncated">直接调用方超过上限被截断。</param>
-public sealed record ImpactDto(SymbolDto Symbol, IReadOnlyList<ImpactCallerDto> Callers, IReadOnlyList<ImpactEntryDto>? Entries, bool EntriesTruncated, int TestCallers, bool Truncated);
+public sealed record ImpactDto(SymbolDto Symbol, IReadOnlyList<ImpactCallerDto> Callers, IReadOnlyList<ImpactEntryDto>? Entries, bool EntriesTruncated, int TestCallers, bool Truncated, IReadOnlyList<string>? StaleFiles = null);
 
 /// <summary>
 /// 一个直接调用方。
@@ -185,7 +185,7 @@ public sealed record ImpactEntryDto(EntryDto Entry, string ContainerKey, string 
 
 /// <summary>GET /api/symbols/{id}/outline 的结果：一个方法按源码顺序的调用步骤，只有一层（展开某一步时再对它的 Target 取一次）。</summary>
 /// <param name="Truncated">步骤超过上限（OutlineBuilder.MaxSteps）被截断。</param>
-public sealed record OutlineDto(SymbolDto Symbol, IReadOnlyList<OutlineStepDto> Steps, bool Truncated);
+public sealed record OutlineDto(SymbolDto Symbol, IReadOnlyList<OutlineStepDto> Steps, bool Truncated, IReadOnlyList<string>? StaleFiles = null);
 
 /// <summary>
 /// 大纲里的一步。

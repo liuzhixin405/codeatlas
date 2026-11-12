@@ -48,7 +48,7 @@ public sealed class PostIndexSteps(ProjectRoots roots, IndexDatabase db, PhaseTi
     private string? _fingerprint;
     private bool _skip;
 
-    /// <summary>规则代码本身的版本：换了 CodeAtlas 版本（规则改了）就算输入变了。</summary>
+    /// <summary>规则代码本身的版本：换了 CodeAtlas 版本（规则改了）就算输入变了。输出语言（Loc.Current）也并进指纹：容器图里的外部系统名、证据说明按语言写库，换语言就整段重算。</summary>
     private static readonly string CodeVersion =
         typeof(ArchitectureScanner).Assembly.ManifestModule.ModuleVersionId + "|" + typeof(EntryDiscovery).Assembly.ManifestModule.ModuleVersionId;
 
@@ -59,7 +59,7 @@ public sealed class PostIndexSteps(ProjectRoots roots, IndexDatabase db, PhaseTi
     {
         _fingerprint = null;
         _skip = false;
-        var fingerprint = Time("arch.fingerprint", () => ArchFingerprintStorage.Combine(CodeVersion, ProjectInventory.InputFingerprint(roots), ArchFingerprintStorage.IndexContent(db)));
+        var fingerprint = Time("arch.fingerprint", () => ArchFingerprintStorage.Combine(CodeVersion, Loc.Current, ProjectInventory.InputFingerprint(roots), ArchFingerprintStorage.IndexContent(db)));
         if (ArchFingerprintStorage.Get(db, ArchFingerprintStorage.Post)?.Value == fingerprint)
         {
             _skip = true;

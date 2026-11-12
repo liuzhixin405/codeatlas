@@ -68,46 +68,46 @@ public static partial class NodeFrameworkFlow
         tail.AddRange(acc.Finishes);
         var httpCount = x.Entries.Count(e => e.Kind == "http");
         var underRoutes = new List<FlowNodeDto>([.. mounts, .. tail]);
-        var placeholder = httpCount > 0 ? Node(null, "路由", "", "controllers", StageController, null, underRoutes, null, null, httpCount) : null;
+        var placeholder = httpCount > 0 ? Node(null, L("路由", "Routes"), "", "controllers", StageController, null, underRoutes, null, null, httpCount) : null;
         var children = new List<FlowNodeDto>(pre);
         if (placeholder is not null) children.Add(placeholder); else children.AddRange(underRoutes);
-        var root = Node(null, "HTTP 请求", "", "entry", pre.Count > 0 ? StageMiddleware : StageController, null, children, null, null);
+        var root = Node(null, L("HTTP 请求", "HTTP request"), "", "entry", pre.Count > 0 ? StageMiddleware : StageController, null, children, null, null);
 
         var present = new HashSet<string>(StringComparer.Ordinal);
         void Collect(FlowNodeDto n) { present.Add(n.Actor); foreach (var c in n.Children) Collect(c); }
         foreach (var c in children) Collect(c);
         var stages = new List<FrameworkStageDto>();
-        if (present.Contains(StageMiddleware)) stages.Add(new FrameworkStageDto(StageMiddleware, "中间件", true, acc.MwSymbols.DistinctBy(s => s.Id).Select(x.Dto).ToList()));
-        if (present.Contains(StageController)) stages.Add(new FrameworkStageDto(StageController, "路由", true, x.EntrySymbols("http")));
-        if (present.Contains(StageTail)) stages.Add(new FrameworkStageDto(StageTail, "收尾", true, acc.TailSymbols.DistinctBy(s => s.Id).Select(x.Dto).ToList()));
+        if (present.Contains(StageMiddleware)) stages.Add(new FrameworkStageDto(StageMiddleware, L("中间件", "Middleware"), true, acc.MwSymbols.DistinctBy(s => s.Id).Select(x.Dto).ToList()));
+        if (present.Contains(StageController)) stages.Add(new FrameworkStageDto(StageController, L("路由", "Routes"), true, x.EntrySymbols("http")));
+        if (present.Contains(StageTail)) stages.Add(new FrameworkStageDto(StageTail, L("收尾", "Teardown"), true, acc.TailSymbols.DistinctBy(s => s.Id).Select(x.Dto).ToList()));
 
         // ---- Notes ----
-        var notes = new List<string> { $"认出 {fwName}（{x.Where(app.File, app.Pos)} 的 {app.Var} = {(koa ? "new Koa()" : "express()")}）" };
-        if (pre.Count == 0 && acc.RouterMiddleware == 0) notes.Add($"{app.Var} 上没有 {app.Var}.use(...) 注册的中间件");
+        var notes = new List<string> { L($"认出 {fwName}（{x.Where(app.File, app.Pos)} 的 {app.Var} = {(koa ? "new Koa()" : "express()")}）", $"Recognized {fwName} ({app.Var} = {(koa ? "new Koa()" : "express()")} at {x.Where(app.File, app.Pos)})") };
+        if (pre.Count == 0 && acc.RouterMiddleware == 0) notes.Add(L($"{app.Var} 上没有 {app.Var}.use(...) 注册的中间件", $"No middleware registered with {app.Var}.use(...)"));
         else
-            notes.Add($"中间件按 {string.Join("、", acc.Files.Select(MapSymbol.FileName))} 里 {app.Var}.use(...) 的书写顺序"
-                      + (acc.Helpers.Count > 0 ? $"；{string.Join("、", acc.Helpers.Distinct().Select(h => h + "(" + app.Var + ")"))} 里注册的按调用位置摊进来" : ""));
+            notes.Add(L($"中间件按 {string.Join("、", acc.Files.Select(MapSymbol.FileName))} 里 {app.Var}.use(...) 的书写顺序", $"Middleware follows the source order of {app.Var}.use(...) in {string.Join(", ", acc.Files.Select(MapSymbol.FileName))}")
+                      + (acc.Helpers.Count > 0 ? L($"；{string.Join("、", acc.Helpers.Distinct().Select(h => h + "(" + app.Var + ")"))} 里注册的按调用位置摊进来", $"; middleware registered inside {string.Join(", ", acc.Helpers.Distinct().Select(h => h + "(" + app.Var + ")"))} is spliced in at the call site") : ""));
         if (acc.Mounts.Count > 0)
-            notes.Add($"路由挂载 {acc.Mounts.Count} 处（{string.Join("、", acc.Mounts.Take(6))}{(acc.Mounts.Count > 6 ? " 等" : "")}）画在路由占位下面"
-                      + (acc.RouterMiddleware > 0 ? $"；router 级中间件 {acc.RouterMiddleware} 个挂在各自的挂载节点下，只对那个前缀生效" : ""));
-        else notes.Add(koa ? "没找到 app.use(router.routes()) 一类的路由挂载" : $"没找到 {app.Var}.use('/前缀', router) 一类的路由挂载：路由直接注册在 {app.Var} 上");
+            notes.Add(L($"路由挂载 {acc.Mounts.Count} 处（{string.Join("、", acc.Mounts.Take(6))}{(acc.Mounts.Count > 6 ? " 等" : "")}）画在路由占位下面", $"{Plural(acc.Mounts.Count, "route mount", "route mounts")} ({string.Join(", ", acc.Mounts.Take(6))}{(acc.Mounts.Count > 6 ? ", …" : "")}) drawn under the routes placeholder")
+                      + (acc.RouterMiddleware > 0 ? L($"；router 级中间件 {acc.RouterMiddleware} 个挂在各自的挂载节点下，只对那个前缀生效", $"; {acc.RouterMiddleware} router-level middleware hang under their mount nodes and apply only to that prefix") : ""));
+        else notes.Add(koa ? L("没找到 app.use(router.routes()) 一类的路由挂载", "No route mount like app.use(router.routes()) found") : L($"没找到 {app.Var}.use('/前缀', router) 一类的路由挂载：路由直接注册在 {app.Var} 上", $"No route mount like {app.Var}.use('/prefix', router) found: routes are registered directly on {app.Var}"));
         if (acc.RouteMiddlewareRoutes > 0)
-            notes.Add($"路由级中间件 {string.Join("、", acc.RouteMiddleware.Take(6))}{(acc.RouteMiddleware.Count > 6 ? " 等" : "")} 写在 {acc.RouteMiddlewareRoutes} 条路由的注册里（router.get('/x', 中间件, 处理函数)），只对那条路由生效，没画进骨架");
+            notes.Add(L($"路由级中间件 {string.Join("、", acc.RouteMiddleware.Take(6))}{(acc.RouteMiddleware.Count > 6 ? " 等" : "")} 写在 {acc.RouteMiddlewareRoutes} 条路由的注册里（router.get('/x', 中间件, 处理函数)），只对那条路由生效，没画进骨架", $"Route-level middleware {string.Join(", ", acc.RouteMiddleware.Take(6))}{(acc.RouteMiddleware.Count > 6 ? ", …" : "")} is written in the registration of {Plural(acc.RouteMiddlewareRoutes, "route", "routes")} (router.get('/x', middleware, handler)); it applies only to that route and is not drawn in the skeleton"));
         if (acc.Posts.Any(p => p.Count > 0) || acc.Finishes.Count > 0)
-            notes.Add("收尾：中间件里 next() 之后的调用按中间件倒序（洋葱往回走）" + (acc.Finishes.Count > 0 ? "；res.on('finish') 回调里的算响应发完时，排在最后" : ""));
+            notes.Add(L("收尾：中间件里 next() 之后的调用按中间件倒序（洋葱往回走）", "Teardown: calls after next() in middleware, in reverse middleware order (the onion unwinding)") + (acc.Finishes.Count > 0 ? L("；res.on('finish') 回调里的算响应发完时，排在最后", "; calls in res.on('finish') callbacks run once the response has been sent, so they come last") : ""));
         if (acc.AfterRoutes.Count > 0)
-            notes.Add($"{string.Join("、", acc.AfterRoutes.Select(n => n.Label))} 注册在路由之后：没有路由匹配（或路由调了 next()）时才走到");
+            notes.Add(L($"{string.Join("、", acc.AfterRoutes.Select(n => n.Label))} 注册在路由之后：没有路由匹配（或路由调了 next()）时才走到", $"{string.Join(", ", acc.AfterRoutes.Select(n => n.Label))} registered after the routes: reached only when no route matches (or a route calls next())"));
         var catches = acc.Posts.SelectMany(p => p).Count(n => n.Note is { } nn && nn.Contains("catch", StringComparison.Ordinal));
         if (koa)
             notes.Add(acc.Errors.Count > 0 || catches > 0
-                ? $"出错时：{(catches > 0 ? "中间件 try { await next() } catch 里的调用" : "")}{(catches > 0 && acc.Errors.Count > 0 ? "、" : "")}{string.Join("、", acc.Errors.Select(n => n.Label))}"
-                : "没找到错误处理（try { await next() } catch 的中间件或 app.on('error')）：出错时走 Koa 默认的 ctx.onerror");
+                ? L($"出错时：{(catches > 0 ? "中间件 try { await next() } catch 里的调用" : "")}{(catches > 0 && acc.Errors.Count > 0 ? "、" : "")}{string.Join("、", acc.Errors.Select(n => n.Label))}", $"On error: {(catches > 0 ? "calls in the middleware's try { await next() } catch" : "")}{(catches > 0 && acc.Errors.Count > 0 ? ", " : "")}{string.Join(", ", acc.Errors.Select(n => n.Label))}")
+                : L("没找到错误处理（try { await next() } catch 的中间件或 app.on('error')）：出错时走 Koa 默认的 ctx.onerror", "No error handling found (middleware with try { await next() } catch, or app.on('error')): errors go to Koa's default ctx.onerror"));
         else
             notes.Add(acc.Errors.Count > 0
-                ? $"出错时：{string.Join("、", acc.Errors.Select(n => n.Label))}（四个参数的错误中间件，按注册顺序）"
-                : "没找到错误中间件（四个参数的 (err, req, res, next)）：出错时走 Express 默认的错误处理（打印堆栈、回 500）");
-        if (httpCount == 0) notes.Add("没有发现 HTTP 路由入口");
-        return Assemble(x.Container, "HTTP 请求", root, stages, [], notes, "入口");
+                ? L($"出错时：{string.Join("、", acc.Errors.Select(n => n.Label))}（四个参数的错误中间件，按注册顺序）", $"On error: {string.Join(", ", acc.Errors.Select(n => n.Label))} (four-argument error middleware, in registration order)")
+                : L("没找到错误中间件（四个参数的 (err, req, res, next)）：出错时走 Express 默认的错误处理（打印堆栈、回 500）", "No error middleware found (four arguments: (err, req, res, next)): errors go to Express's default error handler (prints the stack, responds 500)"));
+        if (httpCount == 0) notes.Add(L("没有发现 HTTP 路由入口", "No HTTP route entries found"));
+        return Assemble(x.Container, L("HTTP 请求", "HTTP request"), root, stages, [], notes, L("入口", "Entry"));
     }
 
     // ================= 收集注册 =================
@@ -274,7 +274,7 @@ public static partial class NodeFrameworkFlow
                 var inner = Classify(x, file, rs, re, flavor, depth + 1);
                 return inner switch
                 {
-                    ExternalArg ea => ea with { Label = $"{name}（{ea.Label}）", Start = s, End = e },
+                    ExternalArg ea => ea with { Label = L($"{name}（{ea.Label}）", $"{name} ({ea.Label})"), Start = s, End = e },
                     UnknownArg => new UnknownArg(name, s, e),
                     _ => inner,
                 };
@@ -343,7 +343,7 @@ public static partial class NodeFrameworkFlow
         switch (arg)
         {
             case InlineArg i:
-                fn = i.Fn; sym = null; path = fn.Path; label = $"{receiver}.use（内联中间件）";
+                fn = i.Fn; sym = null; path = fn.Path; label = L($"{receiver}.use（内联中间件）", $"{receiver}.use (inline middleware)");
                 calls = x.CallsInSpan(fn.Path, fn.Start, fn.End, fn.BodyStart);
                 break;
             case FnArg f:
@@ -352,21 +352,21 @@ public static partial class NodeFrameworkFlow
             case FactoryArg fa:
                 sym = fa.Factory; path = sym.Path; label = x.Label(sym) + "()"; fn = fa.Returned;
                 calls = fa.Returned is { } r ? x.CallsInSpan(sym.Path, r.Start, r.End, r.BodyStart) : x.CallsOf(sym);
-                notes.Add(fa.Returned is null ? $"中间件工厂 {x.Label(sym)}(…)：没找到它 return 的中间件，列的是工厂本身的调用" : $"中间件工厂：{x.Label(sym)}(…) 返回的中间件");
+                notes.Add(fa.Returned is null ? L($"中间件工厂 {x.Label(sym)}(…)：没找到它 return 的中间件，列的是工厂本身的调用", $"Middleware factory {x.Label(sym)}(…): the middleware it returns was not found; listing the factory's own calls") : L($"中间件工厂：{x.Label(sym)}(…) 返回的中间件", $"Middleware factory: middleware returned by {x.Label(sym)}(…)"));
                 break;
             default:
                 return null;
         }
         var ps = fn?.Params ?? [];
         var isError = flavor != "koa" && ps.Count >= 4;
-        if (isError && arg is InlineArg) label = $"{receiver}.use（内联错误中间件）";
+        if (isError && arg is InlineArg) label = L($"{receiver}.use（内联错误中间件）", $"{receiver}.use (inline error middleware)");
         var nextName = flavor == "koa" ? ps.ElementAtOrDefault(1) : isError ? ps.ElementAtOrDefault(3) : ps.ElementAtOrDefault(2);
         var terminal = flavor != "koa" && ps.Count == 2;
         var split = fn is null ? new BodySplit(calls.Where(JsKeep).ToList(), [], [], false, false) : SplitAtNext(x, fn, calls, nextName);
         if (!isError && fn is not null)
         {
-            if (split.Conditional) notes.Add("有条件（不是每条路都调 next：有分支直接返回 / 抛异常）");
-            if (!split.HasNext) notes.Add(terminal ? "两个参数、不调 next：请求在这里结束" : "没找到 next 调用");
+            if (split.Conditional) notes.Add(L("有条件（不是每条路都调 next：有分支直接返回 / 抛异常）", "Conditional (not every path calls next: some branches return / throw)"));
+            if (!split.HasNext) notes.Add(terminal ? L("两个参数、不调 next：请求在这里结束", "Two arguments, no next call: the request ends here") : L("没找到 next 调用", "No next call found"));
         }
         return new Mw(sym, label, sym?.QualifiedName ?? "", sym is null ? "external-group" : "call", path, split, isError, terminal, notes);
     }
@@ -386,9 +386,9 @@ public static partial class NodeFrameworkFlow
             var ev = events[idx];
             var where = x.Where(ev.File, ev.Pos);
             var line = x.LineOf(ev.File, ev.Pos);
-            var via = ev.Via is null ? "" : $"经 {ev.Via}()；";
+            var via = ev.Via is null ? "" : L($"经 {ev.Via}()；", $"via {ev.Via}(); ");
             var scope = JoinRoute(prefix, ev.Path ?? "");
-            var regCond = ev.Conditional ? "；条件分支里注册" : "";
+            var regCond = ev.Conditional ? L("；条件分支里注册", "; registered inside a conditional branch") : "";
             if (ev.Kind == "route")
             {
                 firstRoute ??= ev.RouteLabel;
@@ -403,7 +403,7 @@ public static partial class NodeFrameworkFlow
                     if (mw?.Symbol is { } es) acc.TailSymbols.Add(es);
                     var kids = mw is null ? [] : Rows(mw.Split.Pre.Concat(mw.Split.Post), mw.Path, StageTail, null);
                     acc.Errors.Add(Node(mw?.Symbol?.Id, mw?.Symbol is null ? $"{ev.Receiver}.on('error')" : mw.Label, mw?.Qn ?? "", mw?.Kind ?? "external-group", StageTail,
-                        $"出错时（{ev.Receiver}.on('error')：Koa 的错误事件，{where}）", kids, ev.File, line));
+                        L($"出错时（{ev.Receiver}.on('error')：Koa 的错误事件，{where}）", $"On error ({ev.Receiver}.on('error'): Koa's error event, {where})"), kids, ev.File, line));
                 }
                 continue;
             }
@@ -417,14 +417,14 @@ public static partial class NodeFrameworkFlow
                     result.Add((node, true));
                     continue;
                 }
-                var scopeNote = router ? $"router 级中间件（只对 {scope} 下的路由生效，{where}）" : ev.Path is not null ? $"只对 {ev.Path} 生效（{where}）" : null;
-                var routeAfter = firstRoute is null ? "" : $"；注册在 {firstRoute} 之后：对它前面注册的路由不生效";
+                var scopeNote = router ? L($"router 级中间件（只对 {scope} 下的路由生效，{where}）", $"router-level middleware (applies only to routes under {scope}, {where})") : ev.Path is not null ? L($"只对 {ev.Path} 生效（{where}）", $"applies only to {ev.Path} ({where})") : null;
+                var routeAfter = firstRoute is null ? "" : L($"；注册在 {firstRoute} 之后：对它前面注册的路由不生效", $"; registered after {firstRoute}: does not apply to routes registered before it");
                 if (arg is ExternalArg ext)
                 {
-                    var kind = ext.Builtin ? $"{fwName} 内置" : ext.Package is { } pkg ? $"第三方中间件（{pkg}）" : "不在仓库里";
-                    var note = via + kind + (scopeNote is null ? $"（{where}）" : "；" + scopeNote) + regCond;
-                    if (LooksLikeErrorHandler(ext.Label)) { acc.Errors.Add(Node(null, ext.Label, "", "external-group", StageTail, "出错时：" + note, [], ev.File, line)); continue; }
-                    if (after) { acc.AfterRoutes.Add(Node(null, ext.Label, "", "external-group", StageTail, AfterRoutesNote(where) + "；" + kind, [], ev.File, line)); continue; }
+                    var kind = ext.Builtin ? L($"{fwName} 内置", $"{fwName} built-in") : ext.Package is { } pkg ? L($"第三方中间件（{pkg}）", $"third-party middleware ({pkg})") : L("不在仓库里", "not in the repo");
+                    var note = via + kind + (scopeNote is null ? L($"（{where}）", $" ({where})") : L("；", "; ") + scopeNote) + regCond;
+                    if (LooksLikeErrorHandler(ext.Label)) { acc.Errors.Add(Node(null, ext.Label, "", "external-group", StageTail, L("出错时：", "On error: ") + note, [], ev.File, line)); continue; }
+                    if (after) { acc.AfterRoutes.Add(Node(null, ext.Label, "", "external-group", StageTail, AfterRoutesNote(where) + L("；", "; ") + kind, [], ev.File, line)); continue; }
                     if (router) acc.RouterMiddleware++;
                     result.Add((Node(null, ext.Label, "", "external-group", StageMiddleware, note + routeAfter, [], ev.File, line), false));
                     continue;
@@ -432,32 +432,32 @@ public static partial class NodeFrameworkFlow
                 if (arg is UnknownArg u)
                 {
                     var text = u.Text.Length > 40 ? u.Text[..40] + "…" : u.Text;
-                    result.Add((Node(null, $"{ev.Receiver}.use({text})", "", "external-group", StageMiddleware, via + $"没认出是什么（{where}）", [], ev.File, line), false));
+                    result.Add((Node(null, $"{ev.Receiver}.use({text})", "", "external-group", StageMiddleware, via + L($"没认出是什么（{where}）", $"not recognized ({where})"), [], ev.File, line), false));
                     continue;
                 }
                 if (AnalyzeMw(x, arg, flavor, ev.Receiver) is not { } m) continue;
-                var extra = m.Notes.Count == 0 ? "" : "；" + string.Join("；", m.Notes);
+                var extra = m.Notes.Count == 0 ? "" : L("；", "; ") + string.Join(L("；", "; "), m.Notes);
                 if (m.IsError)
                 {
                     if (m.Symbol is { } es) acc.TailSymbols.Add(es);
                     acc.Errors.Add(Node(m.Symbol?.Id, m.Label, m.Qn, m.Kind, StageTail,
-                        $"出错时（四个参数的错误中间件，{where}）" + (via.Length > 0 ? "；" + via.TrimEnd('；') : "") + (router ? $"；只管 {scope} 下的路由" : ""),
+                        L($"出错时（四个参数的错误中间件，{where}）", $"On error (four-argument error middleware, {where})") + (via.Length > 0 ? L("；", "; ") + via.TrimEnd('；', ';', ' ') : "") + (router ? L($"；只管 {scope} 下的路由", $"; only for routes under {scope}") : ""),
                         Rows(m.Split.Pre.Concat(m.Split.Post), m.Path, StageTail, null), ev.File, line));
                     continue;
                 }
                 if (after)
                 {
                     if (m.Symbol is { } asym) acc.TailSymbols.Add(asym);
-                    acc.AfterRoutes.Add(Node(m.Symbol?.Id, m.Label, m.Qn, m.Kind, StageTail, AfterRoutesNote(where) + (m.Terminal ? "（404 兜底）" : "") + extra,
+                    acc.AfterRoutes.Add(Node(m.Symbol?.Id, m.Label, m.Qn, m.Kind, StageTail, AfterRoutesNote(where) + (m.Terminal ? L("（404 兜底）", " (404 fallback)") : "") + extra,
                         Rows(m.Split.Pre.Concat(m.Split.Post), m.Path, StageTail, null), ev.File, line));
                     continue;
                 }
                 if (m.Symbol is { } ms) acc.MwSymbols.Add(ms);
                 if (router) acc.RouterMiddleware++;
-                result.Add((Node(m.Symbol?.Id, m.Label, m.Qn, m.Kind, StageMiddleware, via + (scopeNote ?? $"自研中间件（{where}）") + extra + regCond + routeAfter,
+                result.Add((Node(m.Symbol?.Id, m.Label, m.Qn, m.Kind, StageMiddleware, via + (scopeNote ?? L($"自研中间件（{where}）", $"custom middleware ({where})")) + extra + regCond + routeAfter,
                     Rows(m.Split.Pre, m.Path, StageMiddleware, null), ev.File, line), false));
-                acc.Posts.Add(Rows(m.Split.Post, m.Path, StageTail, $"{m.Label} 后置"));
-                acc.Finishes.AddRange(Rows(m.Split.Finish, m.Path, StageTail, $"{m.Label}：响应发完时（res.on('finish')）"));
+                acc.Posts.Add(Rows(m.Split.Post, m.Path, StageTail, L($"{m.Label} 后置", $"{m.Label} after")));
+                acc.Finishes.AddRange(Rows(m.Split.Finish, m.Path, StageTail, L($"{m.Label}：响应发完时（res.on('finish')）", $"{m.Label}: once the response has been sent (res.on('finish'))")));
                 foreach (var c in m.Split.Post.Concat(m.Split.Finish))
                     if (c.TargetId is { } tid && x.ById.TryGetValue(tid, out var ts) && ts.Kind != SymbolKind.External) acc.TailSymbols.Add(ts);
             }
@@ -465,7 +465,7 @@ public static partial class NodeFrameworkFlow
         return result;
     }
 
-    private static string AfterRoutesNote(string where) => $"路由之后注册（{where}）：没有路由匹配、或路由调了 next() 时才走到";
+    private static string AfterRoutesNote(string where) => L($"路由之后注册（{where}）：没有路由匹配、或路由调了 next() 时才走到", $"Registered after the routes ({where}): reached only when no route matches or a route calls next()");
 
     /// <summary>挂载节点：label "挂载 /api（router）"，指向路由器文件的模块；子节点是路由器里的 router.use(...) 与再往下的挂载。</summary>
     private static FlowNodeDto MountNode(Ctx x, MountArg mount, AppEvent ev, string prefix, Acc acc, string flavor, int depth, HashSet<(string, string)> visiting)
@@ -482,8 +482,8 @@ public static partial class NodeFrameworkFlow
         }
         var routes = x.Entries.Count(e => e.Kind == "http" && e.File == mount.File);
         var mod = x.Module(mount.File);
-        var note = (ev.Via is null ? "" : $"经 {ev.Via}()；") + $"路由挂载（{x.Where(ev.File, ev.Pos)}）" + (routes > 0 ? $"：{MapSymbol.FileName(mount.File)} 里 {routes} 条路由" : "");
-        return Node(mod?.Id, $"挂载 {full}（{name}）", mod?.QualifiedName ?? mount.File, mod is null ? "external-group" : "call", StageController, note,
+        var note = (ev.Via is null ? "" : L($"经 {ev.Via}()；", $"via {ev.Via}(); ")) + L($"路由挂载（{x.Where(ev.File, ev.Pos)}）", $"Route mount ({x.Where(ev.File, ev.Pos)})") + (routes > 0 ? L($"：{MapSymbol.FileName(mount.File)} 里 {routes} 条路由", $": {Plural(routes, "route", "routes")} in {MapSymbol.FileName(mount.File)}") : "");
+        return Node(mod?.Id, L($"挂载 {full}（{name}）", $"Mount {full} ({name})"), mod?.QualifiedName ?? mount.File, mod is null ? "external-group" : "call", StageController, note,
             Cap(kids, StageMiddleware), ev.File, x.LineOf(ev.File, ev.Pos));
     }
 }

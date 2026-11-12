@@ -72,11 +72,11 @@ public static class DsmBuilder
             .Distinct(StringComparer.Ordinal).OrderBy(d => d, StringComparer.Ordinal).ToList();
         if (dirs.Count == 0) dirs = [""];
         var name = System.IO.Path.GetFileName(roots.Main.TrimEnd('/', '\\'));
-        return new ArchNode(RepoKey, ArchNodeKind.Container, "repo", name.Length == 0 ? "仓库" : name, "", ArchSource.Discovered, [], dirs, []);
+        return new ArchNode(RepoKey, ArchNodeKind.Container, "repo", name.Length == 0 ? L("仓库", "Repository") : name, "", ArchSource.Discovered, [], dirs, []);
     }
 
-    public const string SelfLabel = "（本级）";
-    public const string GlobalLabel = "（全局命名空间）";
+    public static string SelfLabel => L("（本级）", "(this level)");
+    public static string GlobalLabel => L("（全局命名空间）", "(global namespace)");
     public const string StrayPrefix = "⚠ ";
 
     /// <summary>库里的声明规则；给 Build 的 rules 参数。</summary>
@@ -159,7 +159,7 @@ public static class DsmBuilder
         }
 
         if (compOf.Count == 0)
-            return new DsmDto(container.Key, root, [], [], [], [], git is { Files.Count: > 0 }, root.Length == 0 ? "容器成员目录下没有索引到符号（子仓库没被索引？）" : $"{root} 下没有符号", ruleDtos, []);
+            return new DsmDto(container.Key, root, [], [], [], [], git is { Files.Count: > 0 }, root.Length == 0 ? L("容器成员目录下没有索引到符号（子仓库没被索引？）", "No symbols indexed under the container's member directories (submodule not indexed?)") : L($"{root} 下没有符号", $"No symbols under {root}"), ruleDtos, []);
 
         var compKeys = compOf.Values.Distinct().ToList();
         var symbolCount = compKeys.ToDictionary(k => k, k => compOf.Count(p => p.Value == k), StringComparer.Ordinal);

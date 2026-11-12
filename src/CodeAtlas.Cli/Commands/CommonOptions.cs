@@ -21,7 +21,7 @@ internal sealed class ParsedArgs
             var a = args[i];
             if (!a.StartsWith("--", StringComparison.Ordinal)) { result.Positional.Add(a); continue; }
             if (flags.Contains(a)) { result.Options[a] = null; continue; }
-            if (i + 1 >= args.Count) throw new ArgumentException($"选项 {a} 缺少值");
+            if (i + 1 >= args.Count) throw new ArgumentException(L($"选项 {a} 缺少值", $"Option {a} is missing a value"));
             var value = args[++i];
             result.Options[a] = value;
             if (!result._all.TryGetValue(a, out var list)) result._all[a] = list = [];
@@ -48,8 +48,8 @@ internal static class CommonOptions
     public static ProjectRoots Roots(string repo, ParsedArgs args, TextWriter stderr)
     {
         var roots = ProjectRoots.Load(repo, args.Values("--project").Select(Path.GetFullPath), includeNested: !args.Has("--no-nested"));
-        foreach (var m in roots.Missing) stderr.WriteLine($"提示：外部项目根不存在，跳过（已入库的文件保留）：{m}");
-        if (roots.Externals.Count > 0) stderr.WriteLine($"[roots] 主根 {roots.Main}；外部根 {string.Join("、", roots.Externals)}");
+        foreach (var m in roots.Missing) stderr.WriteLine(L($"提示：外部项目根不存在，跳过（已入库的文件保留）：{m}", $"Note: external project root does not exist, skipped (already indexed files are kept): {m}"));
+        if (roots.Externals.Count > 0) stderr.WriteLine(L($"[roots] 主根 {roots.Main}；外部根 {string.Join("、", roots.Externals)}", $"[roots] main root {roots.Main}; external roots {string.Join(ListSep, roots.Externals)}"));
         return roots;
     }
 
@@ -61,7 +61,7 @@ internal static class CommonOptions
         var path = DbPath(repo, args);
         if (!File.Exists(path))
         {
-            stderr.WriteLine($"索引库不存在：{path}。先运行 codeatlas index {repo}");
+            stderr.WriteLine(L($"索引库不存在：{path}。先运行 codeatlas index {repo}", $"Index database does not exist: {path}. Run codeatlas index {repo} first"));
             throw new FileNotFoundException(path);
         }
         return IndexDatabase.Open(path);

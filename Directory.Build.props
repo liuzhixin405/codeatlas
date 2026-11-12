@@ -6,4 +6,9 @@
     <LangVersion>latest</LangVersion>
     <RootNamespace>$(MSBuildProjectName.Replace(".Tests",""))</RootNamespace>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- 文案按语言：L("中文", "English")、ListSep、Plural。定义在 CodeAtlas.Core，所有项目都引用它 -->
+    <Using Include="CodeAtlas.Core.Localization" />
+    <Using Include="CodeAtlas.Core.Localization.Loc" Static="true" />
+  </ItemGroup>
 </Project>

@@ -2,6 +2,7 @@
 // 不 import vscode，方便单测；jumpCommands.ts 把这里算出的项原样搬进 vscode.QuickPickItem。
 // 名字、ctx 文案、跳转目标与调用大纲 / 影响范围共用 outlineModel.ts、impactModel.ts。
 import type { ImpactCallerDto, ImpactCallerKind, ImpactDto, ImpactEntryDto, OutlineDto, OutlineStepDto } from "../webview/types";
+import { L } from "../webview/l10n";
 import { entryLabel } from "./impactModel";
 import { hasDefinition, stepDescription, trustPos, type JumpTarget } from "./outlineModel";
 
@@ -18,11 +19,11 @@ export interface JumpPickItem {
 
 /** QuickPick 里调用方式的中文（直接调用也写出来，和别的方式并列时好区分）。 */
 export const CallerKindPickLabels: Record<ImpactCallerKind, string> = {
-  call: "调用",
-  impl: "经接口",
-  dispatch: "经分派",
-  new: "构造",
-  hop: "跨服务",
+  call: L("调用", "call"),
+  impl: L("经接口", "via interface"),
+  dispatch: L("经分派", "via dispatch"),
+  new: L("构造", "constructor"),
+  hop: L("跨服务", "cross-service"),
 };
 
 /** 行号列表最多写几个，再多写"等 N 处"。 */
@@ -31,7 +32,7 @@ export const MaxPickLines = 6;
 export function linesText(lines: number[]): string {
   if (lines.length === 0) return "";
   const shown = lines.slice(0, MaxPickLines).map((l) => `L${l}`).join(", ");
-  return lines.length > MaxPickLines ? `${shown} 等 ${lines.length} 处` : shown;
+  return lines.length > MaxPickLines ? L(`${shown} 等 ${lines.length} 处`, `${shown} … (${lines.length} total)`) : shown;
 }
 
 /** 调用方 → 项：label 调用方显示名，description 调用方式 + 各处行号，detail 文件路径；选中跳到第一处调用。 */
@@ -61,7 +62,7 @@ export function calleePickItem(step: OutlineStepDto, containerPath: string): Jum
   return {
     label: `${step.label}${step.repeat > 1 ? ` ×${step.repeat}` : ""}`,
     description: stepDescription(step, false),
-    detail: def ? `${def.path}:${def.line}` : step.kind === "ambiguous" ? `${step.children.length} 个候选` : "仓库外",
+    detail: def ? `${def.path}:${def.line}` : step.kind === "ambiguous" ? L(`${step.children.length} 个候选`, `${step.children.length} ${step.children.length === 1 ? "candidate" : "candidates"}`) : L("仓库外", "outside repository"),
     target: { path: containerPath, line: step.line, col: null, pos: step.pos ?? null },
     definition: def,
   };
@@ -84,7 +85,7 @@ export function calleePickItems(outline: OutlineDto): JumpPickItem[] {
       out.push({
         ...sub,
         label: `↳ ${sub.label}`,
-        description: `${c.kind === "dispatch" ? "经分派" : "经接口"} · ${sub.description}`,
+        description: `${c.kind === "dispatch" ? L("经分派", "via dispatch") : L("经接口", "via interface")} · ${sub.description}`,
         target: sub.definition,
       });
     }
@@ -97,7 +98,7 @@ export function entryPickItem(e: ImpactEntryDto): JumpPickItem {
   const target: JumpTarget = { path: e.entry.file, line: e.entry.line, col: null, pos: null };
   return {
     label: entryLabel(e.entry),
-    description: `${e.containerName} · ${e.depth === 0 ? "它自己就是入口" : `往上 ${e.depth} 层`}`,
+    description: `${e.containerName} · ${e.depth === 0 ? L("它自己就是入口", "is itself an entry") : L(`往上 ${e.depth} 层`, `${e.depth} ${e.depth === 1 ? "level" : "levels"} up`)}`,
     detail: `${e.entry.file}:${e.entry.line}`,
     target,
     definition: null,

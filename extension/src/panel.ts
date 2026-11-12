@@ -1,6 +1,10 @@
 import * as crypto from "node:crypto";
 import * as vscode from "vscode";
 import { isAllowedWebviewCommand } from "./aiServices";
+import { parseSaveImage, type SaveImage } from "./imageExport";
+import { L } from "../webview/l10n";
+import { isTrailStep, type TrailData } from "../webview/trail";
+import { copyTrailLink } from "./trailHandler";
 
 export interface PanelCallbacks {
   /** 页面请求跳转：path 是相对仓库根的路径；pos（UTF-16 字符偏移）有值时优先用它定位。 */
@@ -19,6 +23,8 @@ export class PanelHost {
   private ready = false;
   /** 页面还没 ready 时先存着，ready 后再发（聚焦调用图 / 打开模块关系）。 */
   private pendingFocus: { symbolId: number; chain?: "in" | "out"; relations?: boolean } | null = null;
+  /** 点 trail 链接打开面板时页面还没 ready：ready 后再发。 */
+  private pendingTrail: TrailData | null = null;
 
   constructor(private readonly context: vscode.ExtensionContext, private readonly cb: PanelCallbacks) {}
 
@@ -51,12 +57,21 @@ export class PanelHost {
             this.pendingFocus = null;
             if (p.relations) this.showRelations(p.symbolId); else this.focus(p.symbolId, p.chain);
           }
+          if (this.pendingTrail !== null) { const t = this.pendingTrail; this.pendingTrail = null; this.replayTrail(t); }
         } else if (msg.type === "open" && this.repoRoot && msg.path) {
           this.cb.open(this.repoRoot, msg.path, msg.line ?? 1, msg.col ?? 1, typeof msg.pos === "number" ? msg.pos : null);
         } else if (msg.type === "requestIndex" && this.repoRoot) {
           this.cb.requestIndex(this.repoRoot, Boolean(msg.full));
         } else if (msg.type === "followCursor") {
           this.cb.followCursor?.(msg.enabled === true);
+        } else if (msg.type === "shareTrail" && this.repoRoot) {
+          const m = msg as { steps?: unknown; at?: unknown };
+          const steps = Array.isArray(m.steps) ? m.steps.filter(isTrailStep) : [];
+          void copyTrailLink(this.context, this.repoRoot, { steps, at: typeof m.at === "number" ? m.at : steps.length - 1 });
+        } else if (msg.type === "saveImage") {
+          const img = parseSaveImage(msg);
+          if (img) void this.saveImage(img);
+          else void vscode.window.showErrorMessage(L("导出失败：图片数据无效", "Export failed: the image data is invalid"));
         } else if (msg.type === "command" && isAllowedWebviewCommand(msg.command)) {
           // 页面只能触发白名单里的命令（设置 API Key / 选择 AI 服务），其他一律忽略
           void vscode.commands.executeCommand(msg.command);
@@ -88,6 +103,13 @@ export class PanelHost {
     void this.panel.webview.postMessage({ type: "showRelations", symbolId });
   }
 
+  /** 重放分享来的浏览路径（trail 链接）：页面按顺序走一遍，时间线里留下同样的步骤。 */
+  replayTrail(trail: TrailData): void {
+    if (!this.panel) return;
+    if (!this.ready) { this.pendingTrail = trail; return; }
+    void this.panel.webview.postMessage({ type: "replayTrail", steps: trail.steps, at: trail.at });
+  }
+
   /** 跟随光标：编辑器光标所在方法（页面只在调用图模式且勾了"跟随光标"时换焦点）。 */
   cursorSymbol(symbolId: number): void {
     if (this.panel && this.ready) void this.panel.webview.postMessage({ type: "cursorSymbol", symbolId });
@@ -99,6 +121,18 @@ export class PanelHost {
 
   dispose(): void {
     this.panel?.dispose();
+  }
+
+  /** 页面「⤓ 导出」：保存对话框默认放在仓库根，用户确认后写文件。 */
+  private async saveImage(img: SaveImage): Promise<void> {
+    const base = this.repoRoot ? vscode.Uri.file(this.repoRoot) : vscode.workspace.workspaceFolders?.[0]?.uri;
+    const target = await vscode.window.showSaveDialog({
+      defaultUri: base ? vscode.Uri.joinPath(base, img.name) : undefined,
+      filters: img.format === "svg" ? { SVG: ["svg"] } : { PNG: ["png"] },
+    });
+    if (!target) return;
+    await vscode.workspace.fs.writeFile(target, img.bytes);
+    void vscode.window.showInformationMessage(L(`已保存 ${target.fsPath}`, `Saved ${target.fsPath}`));
   }
 
   private sendInit(): void {
@@ -118,7 +152,7 @@ export class PanelHost {
       "connect-src http://127.0.0.1:* http://localhost:*",
     ].join("; ");
     return `<!doctype html>
-<html lang="zh-CN">
+<html lang="${vscode.env.language}">
 <head>
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy" content="${csp}" />

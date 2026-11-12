@@ -34,6 +34,64 @@ public class IndexDatabaseTests
     }
 
     [Fact]
+    public void OpenReadOnly_RejectsWrites_AndLeavesOldVersionAlone()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "codeatlas-ro-" + Guid.NewGuid().ToString("N") + ".db");
+        try
+        {
+            using (var rw = IndexDatabase.Open(path)) rw.Execute("PRAGMA user_version = 11");
+
+            using (var ro = IndexDatabase.OpenReadOnly(path))
+            {
+                Assert.True(ro.NeedsRebuild);
+                var e = Assert.Throws<Microsoft.Data.Sqlite.SqliteException>(() => ro.Execute("PRAGMA user_version = 12"));
+                Assert.Equal(8, e.SqliteErrorCode); // SQLITE_READONLY
+            }
+
+            using var again = IndexDatabase.OpenReadOnly(path);
+            Assert.Equal(11L, again.Scalar<long>("PRAGMA user_version"));
+        }
+        finally
+        {
+            foreach (var f in new[] { path, path + "-wal", path + "-shm" }) if (File.Exists(f)) File.Delete(f);
+        }
+    }
+
+    [Fact]
+    public void MissingColumn_ReadOnlyReportsIt_ReadWriteOpenAddsIt()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "codeatlas-mig-" + Guid.NewGuid().ToString("N") + ".db");
+        try
+        {
+            using (var rw = IndexDatabase.Open(path))
+            {
+                Assert.Empty(rw.MissingMigratedColumns());
+                rw.Execute("ALTER TABLE edges DROP COLUMN ctx");
+            }
+
+            using (var ro = IndexDatabase.OpenReadOnly(path))
+                Assert.Equal([("edges", "ctx", "TEXT")], ro.MissingMigratedColumns());
+
+            using var again = IndexDatabase.Open(path);
+            Assert.Empty(again.MissingMigratedColumns());
+            Assert.Equal(1L, again.Scalar<long>("SELECT COUNT(*) FROM pragma_table_info('edges') WHERE name = 'ctx'"));
+        }
+        finally
+        {
+            foreach (var f in new[] { path, path + "-wal", path + "-shm" }) if (File.Exists(f)) File.Delete(f);
+        }
+    }
+
+    [Fact]
+    public void OpenReadOnly_MissingFile_ThrowsWithoutCreatingIt()
+    {
+        var path = Path.Combine(Path.GetTempPath(), "codeatlas-ro-missing-" + Guid.NewGuid().ToString("N") + ".db");
+        var e = Assert.Throws<InvalidOperationException>(() => IndexDatabase.OpenReadOnly(path));
+        Assert.StartsWith("索引库不存在：", e.Message);
+        Assert.False(File.Exists(path));
+    }
+
+    [Fact]
     public void OpenInMemory_EnablesForeignKeys()
     {
         using var db = IndexDatabase.OpenInMemory();

@@ -1,5 +1,6 @@
 // 调用大纲（侧边栏树视图）的纯逻辑：步骤 → 树节点 → TreeItem 字段。不 import vscode，方便单测；
 // outlineView.ts 把这里算出的 OutlineItemSpec 原样搬进 vscode.TreeItem。
+import { L } from "../webview/l10n";
 import type { OutlineCtx, OutlineDto, OutlineStepDto, OutlineStepKind, SymbolDto } from "../webview/types";
 
 /** 能当大纲根的符号种类：方法 / 函数（含构造函数、箭头函数——索引里都是这两种）。 */
@@ -10,11 +11,11 @@ export function isOutlineSymbol(s: SymbolDto): boolean {
 }
 
 export const CtxLabels: Record<OutlineCtx, string> = {
-  loop: "↻ 循环内",
-  cond: "? 条件内",
-  try: "try 内",
-  catch: "catch 内",
-  callback: "λ 回调",
+  loop: L("↻ 循环内", "↻ in loop"),
+  cond: L("? 条件内", "? conditional"),
+  try: L("try 内", "in try"),
+  catch: L("catch 内", "in catch"),
+  callback: L("λ 回调", "λ callback"),
 };
 
 /** 服务以后加了新的 ctx 也不至于显示 undefined。 */
@@ -36,12 +37,12 @@ const KindIcons: Record<OutlineStepKind, string> = {
 };
 
 const KindNames: Record<OutlineStepKind, string> = {
-  call: "调用",
-  new: "构造",
-  dispatch: "分派到 Handler",
-  impl: "接口实现",
-  external: "框架 / 第三方调用",
-  ambiguous: "多个候选",
+  call: L("调用", "call"),
+  new: L("构造", "constructor"),
+  dispatch: L("分派到 Handler", "dispatch to Handler"),
+  impl: L("接口实现", "interface implementation"),
+  external: L("框架 / 第三方调用", "framework / third-party call"),
+  ambiguous: L("多个候选", "multiple candidates"),
 };
 
 /** 树上的一个节点。 */
@@ -147,8 +148,8 @@ export function childSource(node: StepNode): "inPlace" | "fetch" | "none" {
 export function outlineChildren(outline: OutlineDto, ancestors: ReadonlySet<number>): OutlineNode[] {
   const containerPath = outline.symbol.path;
   const nodes: OutlineNode[] = outline.steps.map((step) => ({ type: "step", step, containerPath, ancestors }));
-  if (outline.steps.length === 0) nodes.push({ type: "info", text: "（没有调用）", tooltip: "这个方法里没有找到调用。", icon: "dash" });
-  if (outline.truncated) nodes.push({ type: "info", text: "…步骤过多，后面的省略了", tooltip: "服务按上限截断了这一层；在 CodeTrail Graph 面板里看完整调用。", icon: "ellipsis" });
+  if (outline.steps.length === 0) nodes.push({ type: "info", text: L("（没有调用）", "(no calls)"), tooltip: L("这个方法里没有找到调用。", "No calls were found in this method."), icon: "dash" });
+  if (outline.truncated) nodes.push({ type: "info", text: L("…步骤过多，后面的省略了", "…too many steps, the rest are omitted"), tooltip: L("服务按上限截断了这一层；在 CodeTrail Graph 面板里看完整调用。", "The service truncated this level at its limit; see the full calls in the CodeTrail Graph panel."), icon: "ellipsis" });
   return nodes;
 }
 
@@ -176,8 +177,8 @@ export function stepLabel(step: OutlineStepDto): string {
 
 export function stepDescription(step: OutlineStepDto, recursive: boolean): string {
   const parts: string[] = [];
-  if (recursive) parts.push("↺ 递归");
-  if (step.kind === "external") parts.push("框架");
+  if (recursive) parts.push(L("↺ 递归", "↺ recursive"));
+  if (step.kind === "external") parts.push(L("框架", "framework"));
   else if (step.kind === "new") parts.push("new");
   const c = ctxLabel(step.ctx);
   if (c) parts.push(c);
@@ -187,7 +188,7 @@ export function stepDescription(step: OutlineStepDto, recursive: boolean): strin
 
 export function confidenceText(confidence: number): string {
   const v = Number.isFinite(confidence) ? confidence : 0;
-  return `置信度 ${v.toFixed(2)}${v < GuessConfidence ? "（推测）" : ""}`;
+  return L(`置信度 ${v.toFixed(2)}${v < GuessConfidence ? "（推测）" : ""}`, `confidence ${v.toFixed(2)}${v < GuessConfidence ? " (guess)" : ""}`);
 }
 
 export function stepTooltip(node: StepNode, recursive: boolean): string {
@@ -196,13 +197,13 @@ export function stepTooltip(node: StepNode, recursive: boolean): string {
   const lines: string[] = [];
   lines.push(t ? t.qualifiedName || step.label : step.label);
   if (t?.signature) lines.push(t.signature);
-  if (hasDefinition(t)) lines.push(`定义：${t.path}:${t.startLine}`);
+  if (hasDefinition(t)) lines.push(L(`定义：${t.path}:${t.startLine}`, `Definition: ${t.path}:${t.startLine}`));
   const c = ctxLabel(step.ctx);
-  lines.push(`调用处：${node.containerPath}:${step.line}${c ? ` · ${c}` : ""}`);
+  lines.push(L(`调用处：${node.containerPath}:${step.line}${c ? ` · ${c}` : ""}`, `Call site: ${node.containerPath}:${step.line}${c ? ` · ${c}` : ""}`));
   lines.push(`${KindNames[step.kind] ?? step.kind} · ${confidenceText(step.confidence)}`);
-  if (step.repeat > 1) lines.push(`相邻的同一调用合并了 ${step.repeat} 次`);
-  if (step.kind === "ambiguous") lines.push("有多个候选，展开查看");
-  if (recursive) lines.push("↺ 递归：这个方法已经在展开路径上，不再展开");
+  if (step.repeat > 1) lines.push(L(`相邻的同一调用合并了 ${step.repeat} 次`, `${step.repeat} adjacent identical calls merged`));
+  if (step.kind === "ambiguous") lines.push(L("有多个候选，展开查看", "Multiple candidates; expand to view"));
+  if (recursive) lines.push(L("↺ 递归：这个方法已经在展开路径上，不再展开", "↺ Recursive: this method is already on the expanded path; not expanding again"));
   return lines.join("\n");
 }
 

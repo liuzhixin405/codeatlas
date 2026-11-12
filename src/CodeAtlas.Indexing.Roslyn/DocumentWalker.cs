@@ -76,7 +76,7 @@ internal sealed class DocumentWalker
         if (symbol is not IMethodSymbol main) return;
         var start = globals[0].GetLocation().GetLineSpan().StartLinePosition;
         var end = globals[^1].GetLocation().GetLineSpan().EndLinePosition;
-        _emit(new SymbolRec(_path, "function", "<top-level>", SymbolKeys.Key(main), "顶级语句（Main）",
+        _emit(new SymbolRec(_path, "function", "<top-level>", SymbolKeys.Key(main), L("顶级语句（Main）", "Top-level statements (Main)"),
             start.Line + 1, start.Character + 1, end.Line + 1, end.Character + 1, null, "internal"));
     }
 

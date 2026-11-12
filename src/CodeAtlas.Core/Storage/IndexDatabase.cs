@@ -24,6 +24,41 @@ public sealed class IndexDatabase : IDisposable
         return db;
     }
 
+    /// <summary>只读打开时等锁的默认秒数。遇到 busy / locked 时 Microsoft.Data.Sqlite 会自动重试直到命令超时，
+    /// 默认 30 秒对查询方（agent 的一次工具调用）太长，这里取 10 秒。</summary>
+    public const int DefaultReadOnlyTimeoutSeconds = 10;
+
+    /// <summary>
+    /// 只读打开（MCP 等纯查询方用）：Mode=ReadOnly，不建表、不迁移、不改 journal 模式、不写版本号，从机制上不写库。
+    /// 库不存在或不是索引库（没有 files 表）时抛 <see cref="InvalidOperationException"/>；格式版本不对时 <see cref="NeedsRebuild"/> 为 true，不去改它。
+    /// 旧库缺的列不会补，查询方遇到 NeedsRebuild 应提示重建。
+    /// </summary>
+    public static IndexDatabase OpenReadOnly(string path, int timeoutSeconds = DefaultReadOnlyTimeoutSeconds)
+    {
+        if (!File.Exists(path)) throw new InvalidOperationException($"索引库不存在：{path}");
+        var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        {
+            DataSource = path,
+            Mode = SqliteOpenMode.ReadOnly,
+            Pooling = false,
+            DefaultTimeout = timeoutSeconds,
+        }.ToString());
+        connection.Open();
+        var db = new IndexDatabase(connection);
+        try
+        {
+            if (db.Scalar<long>("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'files'") == 0)
+                throw new InvalidOperationException($"不是 CodeAtlas 索引库：{path}");
+            db.NeedsRebuild = db.Scalar<long>("PRAGMA user_version") != CurrentIndexVersion;
+            return db;
+        }
+        catch
+        {
+            db.Dispose();
+            throw;
+        }
+    }
+
     public static IndexDatabase OpenInMemory()
     {
         var connection = new SqliteConnection("Data Source=:memory:");
@@ -50,8 +85,10 @@ public sealed class IndexDatabase : IDisposable
     /// 11：handles 只认分派器的 Handler 接口（后台作业 / 对比 Handler 不算），DI 闭合注册的开放泛型 Handler、转发参数的分派、按基类型 Publish 的分派；
     ///     TS 按接收者类型解析（内建 / 宿主对象不连仓库同名方法）、回调传出的函数建 via=callback 边、函数返回值提示（via=returns）。已有语言的边都变了，必须全量重建。
     /// 12：持久化原始引用，增量重绑定与精确边失效处理；旧索引缺少原始引用，必须全量重建。
+    /// 13：TS / JS 事件频道标记（原始引用 via = listen:x / emit:x）与合成边（calls + via = event:x，0.4，见 EventChannelLinker）；
+    ///     旧索引的原始引用里没有标记，增量只重解析改过的文件配不全，必须全量重建。
     /// </summary>
-    public const long CurrentIndexVersion = 12;
+    public const long CurrentIndexVersion = 13;
 
     /// <summary>库是旧版本建的，内容与当前解析规则不一致。</summary>
     public bool NeedsRebuild { get; private set; }
@@ -68,20 +105,35 @@ public sealed class IndexDatabase : IDisposable
     }
 
     /// <summary>旧库补列。CREATE TABLE IF NOT EXISTS 不会改已有表，这里按列是否存在逐个补。</summary>
+    /// <summary>
+    /// 旧库靠 <see cref="Migrate"/> 补的列（表、列、类型）。
+    /// 增量索引用（不改解析规则，旧库补列即可，不需要重建）：
+    /// mtime——上次读到的最后修改时间（UTC ticks），大小与 mtime 都没变就不读文件、不算哈希；
+    /// roslyn_sln——最近一次覆盖这个文件的解决方案（相对主根，'/' 分隔），增量时只开它；
+    /// roslyn_miss——Roslyn 试过、不在任何解决方案里时的文件哈希；哈希没变就不再算"待 Roslyn"。
+    /// </summary>
+    private static readonly (string Table, string Column, string Type)[] MigratedColumns =
+    [
+        ("files", "roslyn_at", "TEXT"),
+        ("files", "mtime", "INTEGER"),
+        ("files", "roslyn_sln", "TEXT"),
+        ("files", "roslyn_miss", "TEXT"),
+        ("edges", "pos", "INTEGER"),
+        ("edges", "ctx", "TEXT"),
+    ];
+
     private void Migrate()
     {
-        var fileColumns = Query<string>("SELECT name FROM pragma_table_info('files')");
-        if (!fileColumns.Contains("roslyn_at")) Execute("ALTER TABLE files ADD COLUMN roslyn_at TEXT");
-        // 增量索引用（不改解析规则，旧库补列即可，不需要重建）：
-        // mtime——上次读到的最后修改时间（UTC ticks），大小与 mtime 都没变就不读文件、不算哈希；
-        // roslyn_sln——最近一次覆盖这个文件的解决方案（相对主根，'/' 分隔），增量时只开它；
-        // roslyn_miss——Roslyn 试过、不在任何解决方案里时的文件哈希；哈希没变就不再算"待 Roslyn"
-        if (!fileColumns.Contains("mtime")) Execute("ALTER TABLE files ADD COLUMN mtime INTEGER");
-        if (!fileColumns.Contains("roslyn_sln")) Execute("ALTER TABLE files ADD COLUMN roslyn_sln TEXT");
-        if (!fileColumns.Contains("roslyn_miss")) Execute("ALTER TABLE files ADD COLUMN roslyn_miss TEXT");
-        var edgeColumns = Query<string>("SELECT name FROM pragma_table_info('edges')");
-        if (!edgeColumns.Contains("pos")) Execute("ALTER TABLE edges ADD COLUMN pos INTEGER");
-        if (!edgeColumns.Contains("ctx")) Execute("ALTER TABLE edges ADD COLUMN ctx TEXT");
+        foreach (var (table, column, type) in MissingMigratedColumns())
+            Execute($"ALTER TABLE {table} ADD COLUMN {column} {type}");
+    }
+
+    /// <summary>旧库还缺的补列（只读查询）。读写方式打开时会被 <see cref="Migrate"/> 补上；只读方式打开时原样报告给调用方。</summary>
+    public IReadOnlyList<(string Table, string Column, string Type)> MissingMigratedColumns()
+    {
+        var existing = MigratedColumns.Select(c => c.Table).Distinct()
+            .ToDictionary(t => t, t => Query<string>($"SELECT name FROM pragma_table_info('{t}')").ToHashSet(StringComparer.Ordinal));
+        return MigratedColumns.Where(c => !existing[c.Table].Contains(c.Column)).ToList();
     }
 
     /// <summary>全量重建完成后调用，把库标记为当前版本。</summary>

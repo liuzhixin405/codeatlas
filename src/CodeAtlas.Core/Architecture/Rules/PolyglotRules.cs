@@ -264,7 +264,7 @@ public static class PolyAddress
 public sealed class GoOutboundRule : IDiscoveryRule
 {
     public string Id => "go-outbound";
-    public string Description => "Go 的 HTTP 调用（net/http、resty）与 gRPC 通道（grpc.Dial / NewClient），地址来自字面量、环境变量或 flag";
+    public string Description => L("Go 的 HTTP 调用（net/http、resty）与 gRPC 通道（grpc.Dial / NewClient），地址来自字面量、环境变量或 flag", "Go HTTP calls (net/http, resty) and gRPC channels (grpc.Dial / NewClient), with addresses from literals, environment variables or flags");
 
     private sealed record Call(Regex Regex, string Protocol, Func<Match, int> ArgIndex);
 
@@ -348,7 +348,7 @@ public sealed class GoOutboundRule : IDiscoveryRule
 public sealed class PythonOutboundRule : IDiscoveryRule
 {
     public string Id => "python-outbound";
-    public string Description => "Python 的 HTTP 调用（requests、httpx、aiohttp）与 gRPC 通道（grpc.insecure_channel），地址来自字面量、环境变量或 settings";
+    public string Description => L("Python 的 HTTP 调用（requests、httpx、aiohttp）与 gRPC 通道（grpc.insecure_channel），地址来自字面量、环境变量或 settings", "Python HTTP calls (requests, httpx, aiohttp) and gRPC channels (grpc.insecure_channel), with addresses from literals, environment variables or settings");
 
     private sealed record Call(Regex Regex, string Protocol, int Arg, string? Keyword, bool Strict = false);
 
@@ -403,7 +403,7 @@ public sealed class PythonOutboundRule : IDiscoveryRule
 public sealed class PolyglotInfraRule : IDiscoveryRule
 {
     public string Id => "polyglot-infra";
-    public string Description => "Go / Python 的数据库打开、Kafka / RabbitMQ 生产消费、Redis / MongoDB 客户端、smtplib、boto3 等代码模式";
+    public string Description => L("Go / Python 的数据库打开、Kafka / RabbitMQ 生产消费、Redis / MongoDB 客户端、smtplib、boto3 等代码模式", "Go / Python code patterns: database opens, Kafka / RabbitMQ produce and consume, Redis / MongoDB clients, smtplib, boto3 and more");
 
     /// <param name="NameFrom">名字从第 1 个捕获组经映射表得到；映射不到就不算。</param>
     /// <param name="FileMustContain">文件里必须出现的文本（.Publish( 这种通用调用只在用了 amqp 的文件里算）。</param>

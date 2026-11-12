@@ -41,7 +41,7 @@ public static class EdgeMatcher
             var evidence = new Evidence(o.File, o.Line, SharedNote(Note(o), shared));
             void AddEdge(string from, string to, string protocol, double confidence, string? configKey, string? url)
             {
-                if (shared?.Usage is { } usage) Add(from, to, protocol, confidence, usage with { Note = $"经共享库 {shared.Library} 的 {shared.Token}：{usage.Note}" }, configKey, url);
+                if (shared?.Usage is { } usage) Add(from, to, protocol, confidence, usage with { Note = L($"经共享库 {shared.Library} 的 {shared.Token}：{usage.Note}", $"via {shared.Token} in shared library {shared.Library}: {usage.Note}") }, configKey, url);
                 Add(from, to, protocol, shared is { Certain: false } ? Math.Min(confidence, SharedLibraryAttribution.Unsure) : confidence, evidence, configKey, url);
             }
             if (o.TargetKey is not null)
@@ -96,7 +96,7 @@ public static class EdgeMatcher
     {
         static bool Generic(ArchNode n) => n.SubKind is "http-service" or "grpc-service" or "other";
         var rename = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (var g in ctx.Externals.Values.GroupBy(n => RuleContext.Slug(n.Name), StringComparer.Ordinal).Where(g => g.Count() > 1))
+        foreach (var g in ctx.Externals.Values.GroupBy(n => RuleContext.Slug(ctx.CanonicalName(n.Key)), StringComparer.Ordinal).Where(g => g.Count() > 1))
         {
             var specific = g.Where(n => !Generic(n)).ToList();
             if (specific.Count != 1) continue;
@@ -168,7 +168,7 @@ public static class EdgeMatcher
     private static ArchNode? IdentityHost(RuleContext ctx, string selfKey)
     {
         var hosts = ctx.DirectEdges.Where(d => d.ExternalKey.StartsWith("external:identity:", StringComparison.Ordinal)
-                                               && ctx.Externals.TryGetValue(d.ExternalKey, out var x) && x.Name.Contains("本进程内", StringComparison.Ordinal))
+                                               && ctx.CanonicalName(d.ExternalKey).Contains("本进程内", StringComparison.Ordinal))
             .Select(d => d.ContainerKey).Distinct(StringComparer.Ordinal).ToList();
         return hosts.Count == 1 && hosts[0] != selfKey ? ctx.Containers.FirstOrDefault(c => c.Key == hosts[0]) : null;
     }
@@ -176,8 +176,8 @@ public static class EdgeMatcher
     private static string? SharedNote(string? note, SharedLibraryUse? shared) => shared switch
     {
         null => note,
-        { Certain: true } => $"{note}（来自共享库 {shared.Library}）".TrimStart(),
-        _ => $"{note}（来自共享库 {shared.Library}，本容器里没找到调用，可能经分派 / 反射）".TrimStart(),
+        { Certain: true } => L($"{note}（来自共享库 {shared.Library}）", $"{note} (from shared library {shared.Library})").TrimStart(),
+        _ => L($"{note}（来自共享库 {shared.Library}，本容器里没找到调用，可能经分派 / 反射）", $"{note} (from shared library {shared.Library}; no call found in this container, possibly via dispatch / reflection)").TrimStart(),
     };
 
     /// <summary>边证据的说明：前端出口的 ClientName 存的是"方法 [经代理 前缀]"，拼成"GET /api/proxy-gateway/api/v5/x"；其余照旧取客户端名 / 配置键 / URL。</summary>

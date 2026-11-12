@@ -1,0 +1,3 @@
+# 统一 LF：本机 core.autocrlf=true 会把检出的文件转成 CRLF，
+# 测试源码里的 raw string 随之带上 \r\n，断言 "setConfig({\n" 这类片段就对不上（FrontendFrameworkFlowTests 等 8 个用例）。
+* text=auto eol=lf

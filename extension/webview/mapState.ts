@@ -1,3 +1,4 @@
+import { L } from "./l10n";
 /** 项目地图的钻取路径：根 → 子命名空间/目录 → … 纯状态，便于测试。 */
 export class MapState {
   private path: string[] = [];
@@ -9,7 +10,7 @@ export class MapState {
 
   /** 面包屑：顶层 + 每一级。 */
   get crumbs(): { label: string; root: string }[] {
-    const list = [{ label: "项目", root: "" }];
+    const list = [{ label: L("项目", "Project"), root: "" }];
     for (const p of this.path) list.push({ label: lastSegment(p), root: p });
     return list;
   }

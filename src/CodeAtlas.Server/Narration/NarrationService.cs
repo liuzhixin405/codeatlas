@@ -72,9 +72,9 @@ public sealed class NarrationService : IDisposable
     /// </summary>
     public NarrativeDto Get(string kind, string key)
     {
-        if (!_options.Enabled) return Empty(kind, key, Unavailable, "已用 --no-ai 关闭 AI 叙述");
+        if (!_options.Enabled) return Empty(kind, key, Unavailable, L("已用 --no-ai 关闭 AI 叙述", "AI narration is turned off with --no-ai"));
         var facts = SafeResolve(kind, key, out var resolveError);
-        if (facts is null) return Empty(kind, key, Failed, resolveError ?? $"没有这个对象：{kind} {key}");
+        if (facts is null) return Empty(kind, key, Failed, resolveError ?? L($"没有这个对象：{kind} {key}", $"No such object: {kind} {key}"));
         var cached = Cached(facts, key);
         if (Transient(kind, key) is { } t)
             return cached is null ? t : cached with { Status = t.Status, Error = t.Error ?? cached.Error };
@@ -95,9 +95,9 @@ public sealed class NarrationService : IDisposable
     /// </summary>
     public NarrativeDto Enqueue(string kind, string key, bool force, bool auto = false)
     {
-        if (!_options.Enabled) return Empty(kind, key, Unavailable, "已用 --no-ai 关闭 AI 叙述");
+        if (!_options.Enabled) return Empty(kind, key, Unavailable, L("已用 --no-ai 关闭 AI 叙述", "AI narration is turned off with --no-ai"));
         var facts = SafeResolve(kind, key, out var resolveError);
-        if (facts is null) return Empty(kind, key, Failed, resolveError ?? $"没有这个对象：{kind} {key}");
+        if (facts is null) return Empty(kind, key, Failed, resolveError ?? L($"没有这个对象：{kind} {key}", $"No such object: {kind} {key}"));
         var cached = Cached(facts, key);
         if (!force && cached is { Status: Ready, Stale: false }) return cached;
         lock (_lock)
@@ -112,7 +112,7 @@ public sealed class NarrationService : IDisposable
             var idx = _queue.FindIndex(q => q.Kind == kind && q.Key == key);
             if (idx >= 0) _queue[idx] = (kind, key, _queue[idx].Force || force, _queue[idx].Auto && auto);
             else _queue.Add((kind, key, force, auto));
-            var dto = Empty(kind, key, Pending, _paused ? "队列已暂停，恢复后生成" : null);
+            var dto = Empty(kind, key, Pending, _paused ? L("队列已暂停，恢复后生成", "Queue is paused; will generate after it resumes") : null);
             _transient[(kind, key)] = (dto, DateTime.UtcNow);
             _signal.Release();
             return Merge(cached, dto);
@@ -133,7 +133,7 @@ public sealed class NarrationService : IDisposable
         lock (_lock)
         {
             _paused = true;
-            foreach (var (kind, key, _, _) in _queue) _transient[(kind, key)] = (Empty(kind, key, Pending, "队列已暂停，恢复后生成"), DateTime.UtcNow);
+            foreach (var (kind, key, _, _) in _queue) _transient[(kind, key)] = (Empty(kind, key, Pending, L("队列已暂停，恢复后生成", "Queue is paused; will generate after it resumes")), DateTime.UtcNow);
         }
         return Status();
     }
@@ -152,9 +152,9 @@ public sealed class NarrationService : IDisposable
     /// <summary>同步生成（CLI 用）：不经队列，直接算并写缓存。非 force 时缓存新鲜就直接返回（Attempts = 0）。</summary>
     public async Task<GenerationResult> GenerateAsync(string kind, string key, bool force, CancellationToken ct)
     {
-        if (!_options.Enabled) return new GenerationResult(Empty(kind, key, Unavailable, "已用 --no-ai 关闭 AI 叙述"), null, null, 0);
+        if (!_options.Enabled) return new GenerationResult(Empty(kind, key, Unavailable, L("已用 --no-ai 关闭 AI 叙述", "AI narration is turned off with --no-ai")), null, null, 0);
         var facts = SafeResolve(kind, key, out var resolveError);
-        if (facts is null) return new GenerationResult(Empty(kind, key, Failed, resolveError ?? $"没有这个对象：{kind} {key}"), null, null, 0);
+        if (facts is null) return new GenerationResult(Empty(kind, key, Failed, resolveError ?? L($"没有这个对象：{kind} {key}", $"No such object: {kind} {key}")), null, null, 0);
         if (!force && Cached(facts, key) is { Status: Ready, Stale: false } hit) return new GenerationResult(hit, null, facts, 0);
         return await RunAsync(facts, key, ct);
     }
@@ -197,7 +197,7 @@ public sealed class NarrationService : IDisposable
                 try
                 {
                     var facts = SafeResolve(item.Kind, item.Key, out var resolveError);
-                    if (facts is null) { Finish(item.Kind, item.Key, Empty(item.Kind, item.Key, Failed, resolveError ?? $"没有这个对象：{item.Kind} {item.Key}")); continue; }
+                    if (facts is null) { Finish(item.Kind, item.Key, Empty(item.Kind, item.Key, Failed, resolveError ?? L($"没有这个对象：{item.Kind} {item.Key}", $"No such object: {item.Kind} {item.Key}"))); continue; }
                     if (!item.Force && Cached(facts, item.Key) is { Status: Ready, Stale: false })
                     {
                         Finish(item.Kind, item.Key, null);
@@ -209,7 +209,7 @@ public sealed class NarrationService : IDisposable
                 catch (OperationCanceledException) when (_stop.IsCancellationRequested) { return; }
                 catch (Exception ex)
                 {
-                    Finish(item.Kind, item.Key, Empty(item.Kind, item.Key, Failed, "生成时出错：" + ex.Message));
+                    Finish(item.Kind, item.Key, Empty(item.Kind, item.Key, Failed, L("生成时出错：", "Error while generating: ") + ex.Message));
                 }
             }
         }
@@ -257,10 +257,10 @@ public sealed class NarrationService : IDisposable
                 lastError = ex.Message;
             }
         }
-        var error = lastError + "（已重试一次）";
+        var error = lastError + L("（已重试一次）", " (retried once)");
         // 失败只在没有可用旧结果时落库：不能拿一次超时把本地模型之前算好的叙述盖掉
         string? git = null;
-        if (_cache.Get(facts.Kind, facts.StableKey) is not { Status: Ready })
+        if (_cache.Get(facts.Kind, NarrativeCacheKey.For(facts)) is not { Status: Ready })
             git = Persist(facts, Failed, _provider.Model, new NarrativeBody("", [], [], null), error);
         var failed = new NarrativeDto(facts.Kind, requestKey, Failed, _provider.Model, Now(), facts.Fingerprint, null, [], [], null, error, GitCommit: git);
         return new GenerationResult(failed, chat, facts, 2);
@@ -273,7 +273,7 @@ public sealed class NarrationService : IDisposable
             points.Select(p => p with { Evidence = p.Evidence.Select(e => facts.StableIds.GetValueOrDefault(e, e)).ToList() }).ToList();
         var stableBody = body with { KeyPoints = ToStable(body.KeyPoints), Risks = ToStable(body.Risks) };
         var git = _facts.GitHead();
-        _cache.Upsert(new NarrativeRow(facts.Kind, facts.StableKey, model, status,
+        _cache.Upsert(new NarrativeRow(facts.Kind, NarrativeCacheKey.For(facts), model, status,
             JsonSerializer.Serialize(stableBody, NarrativeSchema.Json), error, Now(),
             facts.Fingerprint, JsonSerializer.Serialize(facts.Sources), git));
         return git;
@@ -282,7 +282,7 @@ public sealed class NarrationService : IDisposable
     /// <summary>缓存里的这条（evidence 换回当前 id，算好过期状态）；没有为 null。</summary>
     private NarrativeDto? Cached(Facts facts, string requestKey)
     {
-        var row = _cache.Get(facts.Kind, facts.StableKey);
+        var row = _cache.Get(facts.Kind, NarrativeCacheKey.For(facts));
         if (row is null) return null;
         NarrativeBody? body = null;
         try { body = JsonSerializer.Deserialize<NarrativeBody>(row.Json, NarrativeSchema.Json); } catch (JsonException) { /* 坏行：当没有正文 */ }
@@ -296,11 +296,11 @@ public sealed class NarrationService : IDisposable
                       + facts.Sources.Keys.Count(k => !then.ContainsKey(k));
         var factsChanged = row.Fingerprint != facts.Fingerprint;
         var reasons = new List<string>();
-        if (changed > 0) reasons.Add($"生成后 {changed} 个相关文件有改动");
-        if (factsChanged) reasons.Add("架构事实有变化");
+        if (changed > 0) reasons.Add(L($"生成后 {changed} 个相关文件有改动", $"{changed} related files changed since generation"));
+        if (factsChanged) reasons.Add(L("架构事实有变化", "Architecture facts changed"));
         return new NarrativeDto(facts.Kind, requestKey, row.Status, row.Model, row.GeneratedAt, row.Fingerprint,
             string.IsNullOrEmpty(body?.Summary) ? null : body!.Summary, ToCurrent(body?.KeyPoints), ToCurrent(body?.Risks), body?.Layout, row.Error,
-            Stale: reasons.Count > 0, StaleReason: reasons.Count == 0 ? null : string.Join("；", reasons), ChangedFiles: changed, GitCommit: row.GitCommit);
+            Stale: reasons.Count > 0, StaleReason: reasons.Count == 0 ? null : string.Join(L("；", "; "), reasons), ChangedFiles: changed, GitCommit: row.GitCommit);
     }
 
     /// <summary>内存里的排队 / 运行 / 不可用状态；不可用超过 UnavailableTtl 视为过期（让下次打开重新试）。</summary>
@@ -322,7 +322,7 @@ public sealed class NarrationService : IDisposable
     {
         error = null;
         try { return _facts.Resolve(kind, key); }
-        catch (Exception ex) { error = "取事实失败：" + ex.Message; return null; }
+        catch (Exception ex) { error = L("取事实失败：", "Failed to get facts: ") + ex.Message; return null; }
     }
 
     private static NarrativeDto Empty(string kind, string key, string status, string? error) => new(kind, key, status, null, null, null, null, [], [], null, error);
@@ -340,11 +340,18 @@ public sealed class NarrationService : IDisposable
     }
 }
 
+/// <summary>叙述缓存的稳定键按语言分开：中文沿用原键（已有缓存照常命中），英文另存一行（键加 "|en"），两种语言互不覆盖。</summary>
+internal static class NarrativeCacheKey
+{
+    public static string For(Facts facts) => Loc.IsEnglish ? facts.StableKey + "|en" : facts.StableKey;
+}
+
 /// <summary>提示词。叙述用简体中文；模型只能引用给定 id、只能从预设版式里选。</summary>
 public static class Prompts
 {
     public static (string System, string User) Build(Facts facts)
     {
+        if (Loc.IsEnglish) return BuildEnglish(facts);
         var kindName = facts.Kind switch { NarrativePresets.Container => "容器（可部署单元）", NarrativePresets.Component => "组件（容器内的项目 / 命名空间）", _ => "入口流程（从一个入口出发的调用时序）" };
         var presets = string.Join("\n", NarrativePresets.For(facts.Kind).Select(p => $"  - \"{p.Id}\"：{p.Description}"));
         var system = $$"""
@@ -362,6 +369,29 @@ public static class Prompts
         var user = new StringBuilder();
         user.Append("事实（每行一条，方括号里是 id）：\n\n").Append(facts.Text);
         user.Append("\n请按规则输出 JSON。");
+        return (system, user.ToString());
+    }
+
+    /// <summary>英文版提示词：规则、JSON 形状、evidence id 规则与中文版一致，要求模型用英文写。</summary>
+    private static (string System, string User) BuildEnglish(Facts facts)
+    {
+        var kindName = facts.Kind switch { NarrativePresets.Container => "container (deployable unit)", NarrativePresets.Component => "component (project / namespace inside a container)", _ => "entry flow (call sequence starting from one entry point)" };
+        var presets = string.Join("\n", NarrativePresets.For(facts.Kind).Select(p => $"  - \"{p.Id}\": {p.Description}"));
+        var system = $$"""
+            You are a software architecture analysis assistant. Write a short narration in English for one {{kindName}} of a codebase.
+            Rules:
+            1. Rely only on the facts given below; do not invent components, calls or technologies that are not in the facts. If unsure, write "not shown in the facts".
+            2. Every keyPoint / risk must cite fact ids (the ones in square brackets, e.g. node:x, edge:a→b:http, entry:12, sym:34, comp:k, cell:a→b); cited ids must come verbatim from the fact list.
+            3. summary is at most 60 words: say what this object is, what it interacts with, and the one thing most worth noting.
+            4. 3 to 5 keyPoints, one sentence each; 0 to 3 risks, only risks the facts support (cycles, backward dependencies, low-confidence edges, hotspots, hidden coupling, unmatched exits, etc.); use an empty array if there are none.
+            5. layout must be the one preset id below that best presents this object; do not invent your own:
+            {{presets}}
+            6. Output only one JSON object, with no markdown fences and no explanation. Shape:
+            {"summary": "…", "keyPoints": [{"text": "…", "evidence": ["id", "…"]}], "risks": [{"text": "…", "evidence": ["id"]}], "layout": "preset-id"}
+            """;
+        var user = new StringBuilder();
+        user.Append("Facts (one per line, ids in square brackets):\n\n").Append(facts.Text);
+        user.Append("\nOutput the JSON according to the rules.");
         return (system, user.ToString());
     }
 }

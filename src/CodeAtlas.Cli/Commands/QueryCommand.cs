@@ -13,11 +13,12 @@ internal static class QueryCommand
     {
         if (args.Positional.Count < 2)
         {
-            stderr.WriteLine("用法：codeatlas query <repo> <name|qualified-name> [--in] [--out] [--depth N] [--kinds a,b] [--db <path>]\n" +
+            stderr.WriteLine(L("用法：", "Usage: ") + "codeatlas query <repo> <name|qualified-name> [--in] [--out] [--depth N] [--kinds a,b] [--db <path>]\n" +
                              "       codeatlas query <repo> <name|qualified-name> --outline [--depth N] [--no-externals] [--tests] [--db <path>]\n" +
                              "       codeatlas query <repo> <name|qualified-name> --impact [--depth N] [--tests] [--db <path>]\n" +
                              "       codeatlas query <repo> <name|qualified-name> --relations [--depth 1|2] [--tests] [--db <path>]\n" +
-                             "       codeatlas query <repo> <name|qualified-name|#符号id> --flow [--depth N] [--json] [--db <path>]");
+                             L("       codeatlas query <repo> <A> --to <B> [--depth N] [--max-paths N] [--json] [--db <path>]（A 到 B 的调用路径）\n", "       codeatlas query <repo> <A> --to <B> [--depth N] [--max-paths N] [--json] [--db <path>] (call paths from A to B)\n") +
+                             L("       codeatlas query <repo> <name|qualified-name|#符号id> --flow [--depth N] [--json] [--db <path>]", "       codeatlas query <repo> <name|qualified-name|#symbol-id> --flow [--depth N] [--json] [--db <path>]"));
             return 2;
         }
         var repo = args.Positional[0];
@@ -37,7 +38,7 @@ internal static class QueryCommand
             {
                 if (!DbNames.TryParseEdgeKind(name, out var kind))
                 {
-                    stderr.WriteLine($"未知的边类型：{name}。可用：{string.Join(", ", DbNames.EdgeKindNames)}");
+                    stderr.WriteLine(L($"未知的边类型：{name}。可用：{string.Join(", ", DbNames.EdgeKindNames)}", $"Unknown edge kind: {name}. Available: {string.Join(", ", DbNames.EdgeKindNames)}"));
                     return 2;
                 }
                 kinds.Add(kind);
@@ -57,14 +58,17 @@ internal static class QueryCommand
                 ? (reader.GetSymbol(byId) is { } one ? [one] : [])
                 // 完整限定名 → 短名 → 按段对齐的限定名后缀（"类型.方法"、省略参数表 / 泛型），见 OutlineQuery.FindSymbols
                 : OutlineQuery.FindSymbols(db, target);
-            if (matches.Count == 0) { stderr.WriteLine($"未找到符号：{target}"); return 1; }
+            if (matches.Count == 0) { stderr.WriteLine(L($"未找到符号：{target}", $"Symbol not found: {target}")); return 1; }
 
             if (matches.Count > 3)
             {
-                stdout.WriteLine($"有 {matches.Count} 个同名符号，请用限定名：");
+                stdout.WriteLine(L($"有 {matches.Count} 个同名符号，请用限定名：", $"{matches.Count} symbols share this name; use a qualified name:"));
                 foreach (var m in matches) stdout.WriteLine($"  {m.QualifiedName}  [{DbNames.ToDb(m.Kind)}]  {files.GetValueOrDefault(m.FileId, "?")}:{m.StartLine}");
                 return 0;
             }
+
+            if (args.Value("--to") is { } toName)
+                return PrintPaths(db, files, matches, toName, args, stdout, stderr);
 
             if (args.Has("--flow"))
             {
@@ -116,6 +120,58 @@ internal static class QueryCommand
     }
 
     /// <summary>
+    /// A → B 的调用路径（与 GET /api/symbols/{id}/paths?to= 同一份数据）。--depth 是路径最多几步（1..12，默认 8），--max-paths 最多几条（1..50，默认 10）。
+    /// 两端各自要唯一：同名多个时列出候选让人换限定名（或 #符号id）。每一步一行：→ 是确定 / 高置信度的调用，⇢ 是分派边或低置信度（&lt; 0.7）的边。
+    /// --json 输出 CallPathsDto。
+    /// </summary>
+    private static int PrintPaths(IndexDatabase db, Dictionary<long, string> files, IReadOnlyList<SymbolRecord> fromMatches, string toName, ParsedArgs args, TextWriter stdout, TextWriter stderr)
+    {
+        var reader = new IndexReader(db);
+        var toMatches = toName.StartsWith('#') && long.TryParse(toName[1..], out var toId)
+            ? (reader.GetSymbol(toId) is { } one ? [one] : [])
+            : OutlineQuery.FindSymbols(db, toName);
+        if (toMatches.Count == 0) { stderr.WriteLine(L($"未找到符号：{toName}", $"Symbol not found: {toName}")); return 1; }
+        foreach (var (side, list) in new[] { ("A", fromMatches), ("B", toMatches) })
+        {
+            if (list.Count <= 1) continue;
+            stdout.WriteLine(L($"{side} 有 {list.Count} 个同名符号，请用限定名或 #符号id：", $"{side}: {list.Count} symbols share this name; use a qualified name or #symbol-id:"));
+            foreach (var m in list) stdout.WriteLine($"  #{m.Id}  {m.QualifiedName}  [{DbNames.ToDb(m.Kind)}]  {files.GetValueOrDefault(m.FileId, "?")}:{m.StartLine}");
+            return 0;
+        }
+        var depth = int.TryParse(args.Value("--depth"), out var d) ? d : CallPathFinder.DefaultMaxDepth;
+        var max = int.TryParse(args.Value("--max-paths"), out var mp) ? mp : CallPathFinder.DefaultMaxPaths;
+        var (symbols, edges) = MapData.Load(reader);
+        var result = CallPathFinder.Find(symbols, edges, fromMatches[0].Id, toMatches[0].Id, depth, max);
+        if (args.Has("--json"))
+        {
+            stdout.WriteLine(System.Text.Json.JsonSerializer.Serialize(result, ArchCommand.FlowJson));
+            return 0;
+        }
+        var a = fromMatches[0];
+        var b = toMatches[0];
+        stdout.WriteLine($"{a.QualifiedName}  [{DbNames.ToDb(a.Kind)}]  {files.GetValueOrDefault(a.FileId, "?")}:{a.StartLine}");
+        stdout.WriteLine($"  ⇒ {b.QualifiedName}  [{DbNames.ToDb(b.Kind)}]  {files.GetValueOrDefault(b.FileId, "?")}:{b.StartLine}");
+        stdout.WriteLine(L($"路径 {result.Paths.Count} 条（最多 {result.MaxDepth} 步、{result.MaxPaths} 条{(result.Truncated ? "；还有更多，已截断" : "")}）",
+            $"{Plural(result.Paths.Count, "path", "paths")} (at most {result.MaxDepth} steps, {result.MaxPaths} paths{(result.Truncated ? "; more exist, truncated" : "")})"));
+        if (result.Note is { } note) stdout.WriteLine("  " + note);
+        for (var i = 0; i < result.Paths.Count; i++)
+        {
+            var p = result.Paths[i];
+            stdout.WriteLine();
+            stdout.WriteLine(L($"#{i + 1}  {p.Steps.Count} 步  最低 confidence {p.MinConfidence:0.00}{(p.Inferred ? "  含分派 / 低置信度边" : "")}",
+                $"#{i + 1}  {Plural(p.Steps.Count, "step", "steps")}  min confidence {p.MinConfidence:0.00}{(p.Inferred ? "  includes dispatch / low-confidence edges" : "")}"));
+            stdout.WriteLine($"    {result.FromLabel}");
+            foreach (var s in p.Steps)
+            {
+                var kind = s.Kind == "dispatch" ? "dispatches" : "calls";
+                var via = s.Via is null ? "" : $"  via {s.Via}";
+                stdout.WriteLine($"    {(s.Weak ? "⇢" : "→")} {kind}  {s.Label}  ({s.Confidence:0.00})  @ {s.Path}:{s.Line}{via}");
+            }
+        }
+        return 0;
+    }
+
+    /// <summary>
     /// 从任意符号出发的时序树（与 GET /api/symbols/{id}/flow 同一份数据，打印格式同 arch --flow）。--json：一个符号输出一个对象，多个同名时输出数组。
     /// </summary>
     private static int PrintFlow(IndexDatabase db, string repo, ParsedArgs args, IReadOnlyList<SymbolRecord> matches, int? depth, TextWriter stdout, TextWriter stderr)
@@ -141,7 +197,7 @@ internal static class QueryCommand
             if (args.Has("--json")) continue;
             var asEntry = entries.FirstOrDefault(e => e.SymbolId == flow.EntrySymbolId);
             var containerName = containers.FirstOrDefault(c => c.Key == flow.ContainerKey)?.Name ?? flow.ContainerKey;
-            ArchCommand.PrintFlowTree(flow, asEntry is null ? "起点" : "入口", asEntry?.HttpMethod, containerName, sw.Elapsed.TotalMilliseconds, stdout);
+            ArchCommand.PrintFlowTree(flow, asEntry is null ? L("起点", "Start") : L("入口", "Entry"), asEntry?.HttpMethod, containerName, sw.Elapsed.TotalMilliseconds, stdout);
             stdout.WriteLine();
         }
         if (args.Has("--json"))
@@ -159,7 +215,7 @@ internal static class QueryCommand
     {
         if (OutlineQuery.Build(db, id, options) is not { } outline) return;
         PrintSteps(outline.Steps, indent);
-        if (outline.Truncated) stdout.WriteLine($"{new string(' ', indent * 2)}…（超过 {OutlineBuilder.MaxSteps} 步，已截断）");
+        if (outline.Truncated) stdout.WriteLine(new string(' ', indent * 2) + L($"…（超过 {OutlineBuilder.MaxSteps} 步，已截断）", $"… (more than {OutlineBuilder.MaxSteps} steps, truncated)"));
 
         void PrintSteps(IReadOnlyList<OutlineStepDto> steps, int level)
         {
@@ -193,17 +249,17 @@ internal static class QueryCommand
     {
         if (ImpactQuery.Build(db, id, new ImpactOptions(Entries: true, Tests: tests)) is not { } impact) return;
         var entries = impact.Entries ?? [];
-        stdout.WriteLine($"  入口（{entries.Count}）{(impact.EntriesTruncated ? $"：超过 {ImpactBuilder.MaxDepth} 层或 {ImpactBuilder.MaxNodes} 个节点，可能不全" : "")}");
-        if (entries.Count == 0) stdout.WriteLine("    （往上没有走到入口）");
+        stdout.WriteLine(L($"  入口（{entries.Count}）{(impact.EntriesTruncated ? $"：超过 {ImpactBuilder.MaxDepth} 层或 {ImpactBuilder.MaxNodes} 个节点，可能不全" : "")}", $"  Entry points ({entries.Count}){(impact.EntriesTruncated ? $": more than {ImpactBuilder.MaxDepth} levels or {ImpactBuilder.MaxNodes} nodes, may be incomplete" : "")}"));
+        if (entries.Count == 0) stdout.WriteLine(L("    （往上没有走到入口）", "    (no entry point reached upwards)"));
         foreach (var e in entries.OrderBy(e => e.ContainerName, StringComparer.Ordinal).ThenBy(e => e.Depth))
-            stdout.WriteLine($"    [{e.ContainerName}] {EntryText(e.Entry)}  ← 深度 {e.Depth}");
-        stdout.WriteLine("  调用方");
+            stdout.WriteLine(L($"    [{e.ContainerName}] {EntryText(e.Entry)}  ← 深度 {e.Depth}", $"    [{e.ContainerName}] {EntryText(e.Entry)}  ← depth {e.Depth}"));
+        stdout.WriteLine(L("  调用方", "  Callers"));
         PrintCallers(impact, level: 2, remaining: depth, path: [id]);
 
         void PrintCallers(ImpactDto node, int level, int remaining, HashSet<long> path)
         {
             var pad = new string(' ', level * 2);
-            if (node.Callers.Count == 0 && level == 2) stdout.WriteLine($"{pad}（没有调用方）");
+            if (node.Callers.Count == 0 && level == 2) stdout.WriteLine(pad + L("（没有调用方）", "(no callers)"));
             foreach (var c in node.Callers)
             {
                 var recursive = path.Contains(c.Caller.Id);
@@ -211,15 +267,15 @@ internal static class QueryCommand
                 var mark = recursive ? "  ↺" : c.Expandable && !expand ? "  +" : "";
                 var sites = string.Join(" ", c.Sites.Select(s => $"L{s.Line}" + (s.Ctx is null ? "" : $"[{s.Ctx}]")));
                 var conf = c.Confidence < 1 ? $" {c.Confidence:0.##}" : "";
-                var entry = c.AsEntry.Count > 0 ? "  ⇐ " + string.Join("；", c.AsEntry.Select(e => EntryText(e.Entry))) : "";
+                var entry = c.AsEntry.Count > 0 ? "  ⇐ " + string.Join(L("；", "; "), c.AsEntry.Select(e => EntryText(e.Entry))) : "";
                 stdout.WriteLine($"{pad}← {c.Label}  {c.Kind}{conf}  @ {sites}{entry}{mark}");
                 if (!expand || ImpactQuery.Build(db, c.Caller.Id, new ImpactOptions(Entries: false, Tests: tests)) is not { } up) continue;
                 path.Add(c.Caller.Id);
                 PrintCallers(up, level + 1, remaining - 1, path);
                 path.Remove(c.Caller.Id);
             }
-            if (node.Truncated) stdout.WriteLine($"{pad}…（超过 {ImpactBuilder.MaxCallers} 个调用方，已截断）");
-            if (node.TestCallers > 0 && !tests) stdout.WriteLine($"{pad}（另有 {node.TestCallers} 个测试方法直接调用，--tests 显示）");
+            if (node.Truncated) stdout.WriteLine(pad + L($"…（超过 {ImpactBuilder.MaxCallers} 个调用方，已截断）", $"… (more than {ImpactBuilder.MaxCallers} callers, truncated)"));
+            if (node.TestCallers > 0 && !tests) stdout.WriteLine(pad + L($"（另有 {node.TestCallers} 个测试方法直接调用，--tests 显示）", $"({Plural(node.TestCallers, "more test method calls", "more test methods call")} it directly; use --tests to show)"));
         }
     }
 
@@ -238,7 +294,7 @@ internal static class QueryCommand
             if (!seenEdges.Add(n.Edge.Id)) continue;
             var isOutgoing = n.Edge.FromId == id;
             var arrow = isOutgoing ? "→" : "←";
-            var name = n.Other?.QualifiedName ?? n.Edge.ToName + "  (悬空)";
+            var name = n.Other?.QualifiedName ?? n.Edge.ToName + L("  (悬空)", "  (dangling)");
             stdout.WriteLine($"{pad}{arrow} {DbNames.ToDb(n.Edge.Kind)}  {name}  ({n.Edge.Confidence:0.00})  @ line {n.Edge.Line}");
             if (depth > 1 && n.Other is { } other && other.Kind != SymbolKind.External && visited.Add(other.Id))
                 Print(reader, other.Id, isOutgoing ? Direction.Outgoing : Direction.Incoming, kinds, depth - 1, indent + 1, visited, stdout);

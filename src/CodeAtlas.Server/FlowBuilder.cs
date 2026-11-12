@@ -25,7 +25,7 @@ public sealed record FlowActorDto(string Key, string Label, string Kind);
 
 public sealed record FlowDto(
     long EntrySymbolId, string EntryLabel, string? Route, string ContainerKey, IReadOnlyList<FlowActorDto> Actors, FlowNodeDto Root,
-    IReadOnlyList<string> Behaviors, int Nodes, bool Truncated, string? Note);
+    IReadOnlyList<string> Behaviors, int Nodes, bool Truncated, string? Note, IReadOnlyList<string>? StaleFiles = null);
 
 /// <summary>
 /// 从一个入口出发的有序调用树 → 时序图数据。走运行时去向：calls（含 via=impl 的接口 → 实现派生边、via=render 的 JSX 组件渲染边）与 dispatch:T；
@@ -194,7 +194,7 @@ public static partial class FlowBuilder
 
         // 别的 .NET 容器也在索引里 → 后端在，只是路由没匹配上
         var unmatchedNote = containers.Any(c => c.Key != entry.ContainerKey && c.Kind == ArchNodeKind.Container && c.SubKind.StartsWith("dotnet", StringComparison.Ordinal))
-            ? "未对上后端（路由没匹配上）" : "未对上后端（后端不在索引里，或路由没匹配上）";
+            ? L("未对上后端（路由没匹配上）", "Not matched to a backend (route not matched)") : L("未对上后端（后端不在索引里，或路由没匹配上）", "Not matched to a backend (backend not in the index, or route not matched)");
         var entriesById = allEntries.GroupBy(e => e.SymbolId).ToDictionary(g => g.Key, g => g.First());
         var container = containers.FirstOrDefault(c => c.Key == entry.ContainerKey);
         var actors = new Dictionary<string, FlowActorDto>(StringComparer.Ordinal);
@@ -226,11 +226,11 @@ public static partial class FlowBuilder
                 // tree-sitter 兜底的外部符号没有命名空间（external:Append），全部归到一个"外部"列，不然一列一个方法
                 var first = q.Contains('.') ? q.Split('.')[0] : "";
                 var extKey = first.Length > 0 ? "ext|" + first : "ext|";
-                actors.TryAdd(extKey, new FlowActorDto(extKey, first.Length > 0 ? first : "外部 / 框架", "external"));
+                actors.TryAdd(extKey, new FlowActorDto(extKey, first.Length > 0 ? first : ExternalFrameworkLabel, "external"));
                 return extKey;
             }
             var owner = home is not null && home.Members.Any(m => Under(s.Path, m)) ? home : containers.FirstOrDefault(c => c.Members.Any(m => Under(s.Path, m)));
-            if (owner is null) { actors.TryAdd("unknown", new FlowActorDto("unknown", "（未归属）", "external")); return "unknown"; }
+            if (owner is null) { actors.TryAdd("unknown", new FlowActorDto("unknown", L("（未归属）", "(unassigned)"), "external")); return "unknown"; }
             var member = owner.Members.Where(m => Under(s.Path, m)).OrderByDescending(m => m.Length).First();
             var actorKey = owner.Key + "|" + member;
             var label = owner.Members.Count == 1 ? owner.Name : (owner.Key == entry.ContainerKey ? MapBuilder.LastSegment(member.Length == 0 ? owner.Name : member) : owner.Name + " / " + MapBuilder.LastSegment(member));
@@ -241,7 +241,7 @@ public static partial class FlowBuilder
         // 出口的目标：外部系统按节点键成列（列名用外部节点名）；目标是容器时与 hop 同一列；没有目标归"外部 / 框架"
         string HttpActor(Outbound o)
         {
-            if (o.TargetKey is not { } key) { actors.TryAdd("ext|", new FlowActorDto("ext|", "外部 / 框架", "external")); return "ext|"; }
+            if (o.TargetKey is not { } key) { actors.TryAdd("ext|", new FlowActorDto("ext|", ExternalFrameworkLabel, "external")); return "ext|"; }
             if (containers.FirstOrDefault(c => c.Key == key && c.Kind == ArchNodeKind.Container) is { } c)
             {
                 var containerActor = c.Key + "|" + (c.Members.FirstOrDefault() ?? "");
@@ -271,7 +271,7 @@ public static partial class FlowBuilder
                 var siteEdge = OutlineBuilder.SortBySite(list.Select(x => x.Site), e => e.Line, e => e.Pos, _ => 0).First();
                 var at = At(sitePath(siteEdge), siteEdge.Line, siteEdge.Pos);
                 var labels = list.Select(x => OutlineBuilder.ExternalLabel(x.Target.QualifiedName)).Distinct(StringComparer.Ordinal).ToList();
-                rows.Add((siteEdge, new FlowNodeDto(null, labels.Count == 1 ? labels[0] : $"{list.Count} 个{g.Key.Category}调用", list.Count == 1 ? list[0].Target.QualifiedName : string.Join(", ", labels.Take(8)),
+                rows.Add((siteEdge, new FlowNodeDto(null, labels.Count == 1 ? labels[0] : L($"{list.Count} 个{g.Key.Category}调用", $"{list.Count} {g.Key.Category} calls"), list.Count == 1 ? list[0].Target.QualifiedName : string.Join(", ", labels.Take(8)),
                     "external-group", g.Key.Actor, null, 1.0, 1, depth + 1, [], 0, g.Key.Category, at.Path, at.Line, at.Pos)));
             }
             keyed = keyRows.SelectMany(g => g).ToList();
@@ -285,7 +285,7 @@ public static partial class FlowBuilder
                 var rest = groups.Skip(MaxExternalGroups - 1).SelectMany(g => g.Items).ToList();
                 groups = groups.Take(MaxExternalGroups - 1).ToList();
                 var generic = groups.FindIndex(g => g.Actor == "ext|");
-                actors.TryAdd("ext|", new FlowActorDto("ext|", "外部 / 框架", "external"));
+                actors.TryAdd("ext|", new FlowActorDto("ext|", ExternalFrameworkLabel, "external"));
                 if (generic >= 0) groups[generic] = ("ext|", [.. groups[generic].Items, .. rest]);
                 else groups.Add(("ext|", rest));
             }
@@ -293,7 +293,7 @@ public static partial class FlowBuilder
             {
                 var siteEdge = OutlineBuilder.SortBySite(list.Select(x => x.Site), e => e.Line, e => e.Pos, _ => 0).First();
                 var at = At(sitePath(siteEdge), siteEdge.Line, siteEdge.Pos);
-                rows.Add((siteEdge, new FlowNodeDto(null, list.Count == 1 ? list[0].Target.Name : $"{list.Count} 个框架调用", string.Join(", ", list.Select(x => x.Target.Name).Take(8)),
+                rows.Add((siteEdge, new FlowNodeDto(null, list.Count == 1 ? list[0].Target.Name : L($"{list.Count} 个框架调用", $"{list.Count} framework calls"), string.Join(", ", list.Select(x => x.Target.Name).Take(8)),
                     "external-group", groupActor, null, 1.0, 1, depth + 1, [], 0, null, at.Path, at.Line, at.Pos)));
             }
             return OutlineBuilder.SortBySite(rows, r => r.Site.Line, r => r.Site.Pos, _ => 0).Select(r => r.Node);
@@ -323,7 +323,7 @@ public static partial class FlowBuilder
             var label = s.Kind == SymbolKind.Module ? MapSymbol.FileName(s.Path) : MemberLabel(s);
             var dupKey = (s.Id, home?.Key);
             if (kind != "entry" && s.Kind != SymbolKind.External && depth < maxDepth && expandedBy.ContainsKey(dupKey))
-                return new FlowNodeDto(s.Id, label, s.QualifiedName, kind, actor, via, confidence, 1, depth, [], 0, note is null ? DupMarker : note + "；" + DupMarker,
+                return new FlowNodeDto(s.Id, label, s.QualifiedName, kind, actor, via, confidence, 1, depth, [], 0, note is null ? DupMarker : note + L("；", "; ") + DupMarker,
                     site.Path, site.Line, site.Pos);
             if (depth >= maxDepth || budget <= 1 || s.Kind == SymbolKind.External)
             {
@@ -386,7 +386,7 @@ public static partial class FlowBuilder
                 if (mine.Any(i => i.Edge.Confidence >= 0.9))
                 {
                     dropped.Add(c.Edge);
-                    foreach (var i in mine) viaInterface.TryAdd(i.Target.Id, "经接口 " + OwnerName(c.Target));
+                    foreach (var i in mine) viaInterface.TryAdd(i.Target.Id, L("经接口 ", "via interface ") + OwnerName(c.Target));
                 }
                 else
                 {
@@ -435,7 +435,7 @@ public static partial class FlowBuilder
                 newRow = (_ =>
                 {
                     nodes++;
-                    return new FlowNodeDto(null, $"构造 {trivial.Count} 个对象", string.Join(", ", names), "call", ActorOf(first.Target, home), null, 1.0, 1, depth + 1, [], 0,
+                    return new FlowNodeDto(null, L($"构造 {trivial.Count} 个对象", $"Construct {trivial.Count} objects"), string.Join(", ", names), "call", ActorOf(first.Target, home), null, 1.0, 1, depth + 1, [], 0,
                         string.Join(", ", names.Take(8)) + (names.Count > 8 ? " …" : ""), newSite.Path, newSite.Line, newSite.Pos);
                 }, first.Site.Line, first.Site.Pos);
             }
@@ -465,7 +465,7 @@ public static partial class FlowBuilder
                         hopSite.Path, hopSite.Line, hopSite.Pos); }, m.Line, null));
                 else
                     pending.Add((_ => { AddHopActor(); return new FlowNodeDto(null, hopLabel, m.Path, "hop", hopActorKey, null, EdgeMatcher.ByRoute, 1, depth + 1, [], 0,
-                        target is null ? "目标容器不存在" : $"→ {target.Name}（没有索引到符号，停在这里）", hopSite.Path, hopSite.Line, hopSite.Pos); }, m.Line, null));
+                        target is null ? L("目标容器不存在", "Target container does not exist") : L($"→ {target.Name}（没有索引到符号，停在这里）", $"→ {target.Name} (no symbols indexed; stopping here)"), hopSite.Path, hopSite.Line, hopSite.Pos); }, m.Line, null));
             }
             foreach (var o in grpcExits)
             {
@@ -478,12 +478,12 @@ public static partial class FlowBuilder
                     {
                         nodes++;
                         actors.TryAdd(hopActorKey, new FlowActorDto(hopActorKey, target.Name, "container"));
-                        return new FlowNodeDto(null, exitLabel, o.ClientName ?? "", "hop", hopActorKey, null, EdgeMatcher.ByRoute, 1, depth + 1, [], 0, $"→ {target.Name}（没有索引到符号，停在这里）",
+                        return new FlowNodeDto(null, exitLabel, o.ClientName ?? "", "hop", hopActorKey, null, EdgeMatcher.ByRoute, 1, depth + 1, [], 0, L($"→ {target.Name}（没有索引到符号，停在这里）", $"→ {target.Name} (no symbols indexed; stopping here)"),
                             exitSite.Path, exitSite.Line, exitSite.Pos);
                     }, o.Line, null));
                 }
                 else
-                    pending.Add((_ => { nodes++; return new FlowNodeDto(null, exitLabel, o.ClientName ?? "", "http", HttpActor(o), null, 0.5, 1, depth + 1, [], 0, "外部 gRPC 服务",
+                    pending.Add((_ => { nodes++; return new FlowNodeDto(null, exitLabel, o.ClientName ?? "", "http", HttpActor(o), null, 0.5, 1, depth + 1, [], 0, L("外部 gRPC 服务", "External gRPC service"),
                         exitSite.Path, exitSite.Line, exitSite.Pos); }, o.Line, null));
             }
             // 没对上路由的 HTTP 出口：叶子节点，同一方法里相同 Label 的折成一条（Count 累加，位置取第一处）；分名额排在调用与续接之后
@@ -542,7 +542,7 @@ public static partial class FlowBuilder
             // 位置相同（比如旧索引没有行号）时保持 rank 顺序。"还有 N 个"与"N 个框架调用"放最后
             children.AddRange(OutlineBuilder.SortBySite(Enumerable.Range(0, built.Length), i => pending[i].Line, i => pending[i].Pos, i => i).Select(i => built[i].Node));
             if (hiddenCount > 0)
-                children.Add(new FlowNodeDto(null, $"还有 {hiddenCount} 个", "", "more", actor, null, 1.0, 1, depth + 1, [], hiddenCount, null));
+                children.Add(new FlowNodeDto(null, L($"还有 {hiddenCount} 个", $"{hiddenCount} more"), "", "more", actor, null, 1.0, 1, depth + 1, [], hiddenCount, null));
             if (externals.Count > 0) children.AddRange(ExternalRows(externals, home, depth, SitePath));
 
             // 什么都没展开出来（只有自己）：不算"已展开"，别处再出现照常处理
@@ -551,7 +551,7 @@ public static partial class FlowBuilder
         }
 
         if (!byId.TryGetValue(entry.SymbolId, out var entrySymbol))
-            return new FlowDto(entry.SymbolId, entry.Route ?? "", entry.Route, entry.ContainerKey, [], new FlowNodeDto(null, "?", "", "call", "unknown", null, 0, 1, 0, [], 0, null), [], 0, false, "入口符号在索引里不存在（索引后被改掉了？）");
+            return new FlowDto(entry.SymbolId, entry.Route ?? "", entry.Route, entry.ContainerKey, [], new FlowNodeDto(null, "?", "", "call", "unknown", null, 0, 1, 0, [], 0, null), [], 0, false, L("入口符号在索引里不存在（索引后被改掉了？）", "Entry symbol does not exist in the index (changed after indexing?)"));
 
         var root = Expand(entrySymbol, "entry", null, 1.0, 0, [], container, maxNodes, At(entrySymbol.Path, entrySymbol.StartLine, null));
         var truncated = HasCut(root); // 先算：cut 按节点引用记，MarkRepeats 会换掉节点实例
@@ -576,6 +576,7 @@ public static partial class FlowBuilder
         return new FlowDto(entry.SymbolId, entryLabel, entry.Route, entry.ContainerKey, actorList, root, behaviors, nodes, truncated, null);
     }
 
+    private static string ExternalFrameworkLabel => L("外部 / 框架", "External / framework");
     private const string DupMarker = "dup";
 
     /// <summary>
@@ -599,8 +600,9 @@ public static partial class FlowBuilder
             order++;
             if (n.Note is { } note && note.EndsWith(DupMarker, StringComparison.Ordinal))
             {
-                var where = n.SymbolId is { } id && fullAt.TryGetValue((id, n.Actor), out var at) && at > order ? "下面" : "上面";
-                return n with { Note = note[..^DupMarker.Length] + where + "已展开，这里不再重复" };
+                var below = n.SymbolId is { } id && fullAt.TryGetValue((id, n.Actor), out var at) && at > order;
+                var expanded = below ? L("下面已展开，这里不再重复", "Expanded below; not repeated here") : L("上面已展开，这里不再重复", "Expanded above; not repeated here");
+                return n with { Note = note[..^DupMarker.Length] + expanded };
             }
             if (n.Children.Count == 0) return n;
             var kids = new List<FlowNodeDto>(n.Children.Count);

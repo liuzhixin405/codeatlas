@@ -1,3 +1,4 @@
+import { L } from "./l10n";
 import { nodeLabel } from "./neighborRank";
 import type { MergedNeighbor } from "./neighborRules";
 import type { NeighborDto, SymbolDto } from "./types";
@@ -75,20 +76,21 @@ interface Snapshot {
 }
 
 /** 边上显示的字：分发边显示 "new 消息类型"，其余显示 via 或 kind。 */
-function edgeLabel(n: NeighborDto): string {
+export function edgeLabel(n: NeighborDto): string {
   if (n.via?.startsWith("dispatch:")) return `new ${n.via.slice("dispatch:".length)}`;
+  if (n.via?.startsWith("event:")) return L(`事件 ${n.via.slice("event:".length)}`, `event ${n.via.slice("event:".length)}`);
   return n.via ?? n.kind;
 }
 
 export function callersCapsuleLabel(count: number): string {
-  return `被 ${count} 处调用`;
+  return L(`被 ${count} 处调用`, `Called from ${count} ${count === 1 ? "place" : "places"}`);
 }
 
 function capsuleLabel(count: number, direction: "in" | "out", overflow = false, external = false, callers = false): string {
   if (callers) return callersCapsuleLabel(count);
-  if (external) return `${count} 个框架调用`;
-  if (overflow) return direction === "out" ? `还有 ${count} 个目标` : `还有 ${count} 个调用者`;
-  return direction === "out" ? `${count} 个可能目标` : `${count} 个可能调用者`;
+  if (external) return L(`${count} 个框架调用`, `${count} framework ${count === 1 ? "call" : "calls"}`);
+  if (overflow) return direction === "out" ? L(`还有 ${count} 个目标`, `${count} more ${count === 1 ? "target" : "targets"}`) : L(`还有 ${count} 个调用者`, `${count} more ${count === 1 ? "caller" : "callers"}`);
+  return direction === "out" ? L(`${count} 个可能目标`, `${count} possible ${count === 1 ? "target" : "targets"}`) : L(`${count} 个可能调用者`, `${count} possible ${count === 1 ? "caller" : "callers"}`);
 }
 
 export type Side = "out" | "in" | "both";
@@ -455,7 +457,7 @@ export class GraphState {
     const id = `edge:${n.edgeId}`;
     if (!this.edges.has(id)) {
       const viaInterface = (n as MergedNeighbor).viaInterface;
-      this.edges.set(id, { id, source, target, kind: n.kind, confidence: n.confidence, line: n.line, dashed: n.confidence <= 0.3, label: edgeLabel(n), ...(viaInterface ? { viaInterface } : {}) });
+      this.edges.set(id, { id, source, target, kind: n.kind, confidence: n.confidence, line: n.line, dashed: n.confidence <= 0.3 || (n.via?.startsWith("event:") ?? false), label: edgeLabel(n), ...(viaInterface ? { viaInterface } : {}) });
     }
   }
 

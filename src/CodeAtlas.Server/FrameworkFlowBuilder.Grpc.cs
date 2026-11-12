@@ -39,7 +39,7 @@ public static partial class FrameworkFlowBuilder
                 case "go":
                     foreach (Match m in Regex.Matches(text, @"\bgrpc\s*\.\s*NewServer\s*\("))
                     {
-                        server ??= $"grpc.NewServer，{Where(m.Index)}";
+                        server ??= L($"grpc.NewServer，{Where(m.Index)}", $"grpc.NewServer, {Where(m.Index)}");
                         var close = MatchBracket(text, m.Index + m.Length - 1, '(', ')');
                         if (close < 0) continue;
                         var args = raw[(m.Index + m.Length)..close];
@@ -50,8 +50,8 @@ public static partial class FrameworkFlowBuilder
                             var kind = o.Groups["k"].Value;
                             var pos = m.Index + m.Length + o.Index;
                             var note = kind == "StatsHandler"
-                                ? $"StatsHandler（{Where(pos)}）：每个 RPC 开始 / 结束时回调（链路追踪、指标），包在服务方法外层"
-                                : $"{(kind.Contains("Stream", StringComparison.Ordinal) ? "流式" : "一元")}拦截器（grpc.{kind}，{Where(pos)}）：包在服务方法外层，按注册顺序由外到内";
+                                ? L($"StatsHandler（{Where(pos)}）：每个 RPC 开始 / 结束时回调（链路追踪、指标），包在服务方法外层", $"StatsHandler ({Where(pos)}): called at the start / end of every RPC (tracing, metrics), wraps the service methods")
+                                : L($"{(kind.Contains("Stream", StringComparison.Ordinal) ? "流式" : "一元")}拦截器（grpc.{kind}，{Where(pos)}）：包在服务方法外层，按注册顺序由外到内", $"{(kind.Contains("Stream", StringComparison.Ordinal) ? "Stream" : "Unary")} interceptor (grpc.{kind}, {Where(pos)}): wraps the service methods, outermost first in registration order");
                             foreach (var part in SplitTopLevel(inner).Where(p => p.Length > 0))
                                 interceptors.Add(Node(null, part, part, "external-group", StageInterceptor, note, [], path, LineOf(pos)));
                         }
@@ -60,19 +60,19 @@ public static partial class FrameworkFlowBuilder
                 case "python":
                     foreach (Match m in Regex.Matches(text, @"\bgrpc\s*\.\s*(?:aio\s*\.\s*)?server\s*\("))
                     {
-                        server ??= $"grpc.server，{Where(m.Index)}";
+                        server ??= L($"grpc.server，{Where(m.Index)}", $"grpc.server, {Where(m.Index)}");
                         var close = MatchBracket(text, m.Index + m.Length - 1, '(', ')');
                         if (close < 0) continue;
                         var args = raw[(m.Index + m.Length)..close];
                         if (Regex.Match(args, @"interceptors\s*=\s*(?<o>[\[(])") is { Success: true } im
                             && MatchBracket(args, im.Groups["o"].Index, im.Groups["o"].Value[0], im.Groups["o"].Value == "[" ? ']' : ')') is var ic and > 0)
                             foreach (var part in SplitTopLevel(args[(im.Groups["o"].Index + 1)..ic]).Select(p => Regex.Replace(p, @"\s+", "")).Where(p => p.Length > 0))
-                                interceptors.Add(Node(null, part, part, "external-group", StageInterceptor, $"服务端拦截器（interceptors=，{Where(m.Index)}）：按列表顺序由外到内", [], path, LineOf(m.Index)));
+                                interceptors.Add(Node(null, part, part, "external-group", StageInterceptor, L($"服务端拦截器（interceptors=，{Where(m.Index)}）：按列表顺序由外到内", $"Server interceptor (interceptors=, {Where(m.Index)}): outermost first in list order"), [], path, LineOf(m.Index)));
                     }
                     break;
                 default:
                     foreach (Match m in Regex.Matches(text, @"\b(?:Netty)?ServerBuilder\s*\.\s*forPort\s*\("))
-                        server ??= $"ServerBuilder.forPort，{Where(m.Index)}";
+                        server ??= L($"ServerBuilder.forPort，{Where(m.Index)}", $"ServerBuilder.forPort, {Where(m.Index)}");
                     foreach (Match m in Regex.Matches(text, @"\.\s*intercept\s*\(|\bServerInterceptors\s*\.\s*intercept(?:Forward)?\s*\("))
                     {
                         var close = MatchBracket(text, m.Index + m.Length - 1, '(', ')');
@@ -80,37 +80,38 @@ public static partial class FrameworkFlowBuilder
                         var parts = SplitTopLevel(raw[(m.Index + m.Length)..close]).Select(p => Regex.Replace(p, @"\s+", "")).Where(p => p.Length > 0).ToList();
                         if (m.Value.Contains("ServerInterceptors", StringComparison.Ordinal) && parts.Count > 0) parts.RemoveAt(0); // 第一个参数是服务
                         foreach (var part in parts)
-                            interceptors.Add(Node(null, part, part, "external-group", StageInterceptor, $"服务端拦截器（{Where(m.Index)}）：包在服务方法外层", [], path, LineOf(m.Index)));
+                            interceptors.Add(Node(null, part, part, "external-group", StageInterceptor, L($"服务端拦截器（{Where(m.Index)}）：包在服务方法外层", $"Server interceptor ({Where(m.Index)}): wraps the service methods"), [], path, LineOf(m.Index)));
                     }
                     break;
             }
         }
 
         var services = grpc.Where(e => e.Route is not null).GroupBy(e => e.Route!.Contains('/') ? e.Route![..e.Route!.IndexOf('/')] : "?", StringComparer.Ordinal)
-            .Select(g => $"{g.Key} {g.Count()} 个方法").ToList();
+            .Select(g => L($"{g.Key} {g.Count()} 个方法", $"{g.Key} {Plural(g.Count(), "method", "methods")}")).ToList();
         var notes = new List<string>(preface)
         {
-            $"认出 gRPC 服务（{server ?? "没找到创建服务器的地方"}）：{string.Join("、", services)}；没有 HTTP 框架，框架流程画 gRPC 这条链",
+            L($"认出 gRPC 服务（{server ?? "没找到创建服务器的地方"}）：{string.Join(ListSep, services)}；没有 HTTP 框架，框架流程画 gRPC 这条链", $"Recognized gRPC services ({server ?? "server creation not found"}): {string.Join(ListSep, services)}; no HTTP framework, so the framework flow shows the gRPC pipeline"),
             interceptors.Count == 0
                 ? language switch
                 {
-                    "go" => "没有注册服务端拦截器（grpc.NewServer 的参数里没有 UnaryInterceptor / StreamInterceptor / StatsHandler）：请求直接进服务方法",
-                    "python" => "没有注册服务端拦截器（grpc.server 没传 interceptors=）：请求直接进服务方法",
-                    _ => "没有注册服务端拦截器（ServerBuilder 上没有 .intercept(…)，也没有 ServerInterceptors.intercept）：请求直接进服务方法",
+                    "go" => L("没有注册服务端拦截器（grpc.NewServer 的参数里没有 UnaryInterceptor / StreamInterceptor / StatsHandler）：请求直接进服务方法", "No server interceptors registered (no UnaryInterceptor / StreamInterceptor / StatsHandler among the grpc.NewServer arguments): requests go straight to the service methods"),
+                    "python" => L("没有注册服务端拦截器（grpc.server 没传 interceptors=）：请求直接进服务方法", "No server interceptors registered (grpc.server has no interceptors=): requests go straight to the service methods"),
+                    _ => L("没有注册服务端拦截器（ServerBuilder 上没有 .intercept(…)，也没有 ServerInterceptors.intercept）：请求直接进服务方法", "No server interceptors registered (no .intercept(…) on ServerBuilder and no ServerInterceptors.intercept): requests go straight to the service methods"),
                 }
-                : $"服务端拦截器 {interceptors.Count} 个，按注册顺序包在服务方法外层（先注册的在外层）",
+                : L($"服务端拦截器 {interceptors.Count} 个，按注册顺序包在服务方法外层（先注册的在外层）", $"{Plural(interceptors.Count, "server interceptor", "server interceptors")}, wrapping the service methods in registration order (first registered is outermost)"),
         };
         var others = entries.Count - grpc.Count;
-        if (others > 0) notes.Add($"另有 {others} 个非 gRPC 入口（{string.Join("、", entries.Where(e => e.Kind != "grpc").GroupBy(e => e.Kind).Select(g => $"{g.Key} {g.Count()}"))}），没画在这条链上");
+        if (others > 0) notes.Add(L($"另有 {others} 个非 gRPC 入口（", $"Plus {Plural(others, "non-gRPC entry point", "non-gRPC entry points")} (")
+                                 + string.Join(ListSep, entries.Where(e => e.Kind != "grpc").GroupBy(e => e.Kind).Select(g => $"{g.Key} {g.Count()}")) + L("），没画在这条链上", "), not drawn in this pipeline"));
 
-        var placeholder = Node(null, "服务方法", "", "controllers", StageController, "具体做了什么看各方法的入口流程", [], null, null, grpc.Count);
-        var root = Node(null, "gRPC 调用", "", "entry", interceptors.Count > 0 ? StageInterceptor : StageController, null, [.. interceptors, placeholder], null, null);
+        var placeholder = Node(null, L("服务方法", "Service methods"), "", "controllers", StageController, L("具体做了什么看各方法的入口流程", "See each method's entry flow for what it does"), [], null, null, grpc.Count);
+        var root = Node(null, L("gRPC 调用", "gRPC call"), "", "entry", interceptors.Count > 0 ? StageInterceptor : StageController, null, [.. interceptors, placeholder], null, null);
         var byId = input.Symbols.GroupBy(s => s.Id).ToDictionary(g => g.Key, g => g.First());
         SymbolDto? Dto(long id) => input.Sources.Symbol?.Invoke(id)
             ?? (byId.TryGetValue(id, out var s) ? new SymbolDto(s.Id, DbNames.ToDb(s.Kind), s.Name, s.QualifiedName, null, s.Path, s.StartLine, 0, s.EndLine, 0, s.Visibility) : null);
         var stages = new List<FrameworkStageDto>();
-        if (interceptors.Count > 0) stages.Add(new FrameworkStageDto(StageInterceptor, "拦截器", true, []));
-        stages.Add(new FrameworkStageDto(StageController, "服务方法", true, grpc.Select(e => Dto(e.SymbolId)).Where(d => d is not null).Select(d => d!).ToList()));
-        return Assemble(container, "gRPC 调用", root, stages, [], notes, interceptors.Count > 0 ? "拦截器" : "服务方法");
+        if (interceptors.Count > 0) stages.Add(new FrameworkStageDto(StageInterceptor, L("拦截器", "Interceptors"), true, []));
+        stages.Add(new FrameworkStageDto(StageController, L("服务方法", "Service methods"), true, grpc.Select(e => Dto(e.SymbolId)).Where(d => d is not null).Select(d => d!).ToList()));
+        return Assemble(container, L("gRPC 调用", "gRPC call"), root, stages, [], notes, interceptors.Count > 0 ? L("拦截器", "Interceptors") : L("服务方法", "Service methods"));
     }
 }

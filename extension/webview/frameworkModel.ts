@@ -1,3 +1,4 @@
+import { L } from "./l10n";
 import type { ArchNodeDto, EntryDto, FlowActorDto, FlowDto, FlowNodeDto, FrameworkFlowDto, FrameworkHandlerDto, FrameworkHandlerGroupDto, FrameworkStageDto } from "./types";
 
 /**
@@ -7,10 +8,10 @@ import type { ArchNodeDto, EntryDto, FlowActorDto, FlowDto, FlowNodeDto, Framewo
  */
 
 /** 顶层切换按钮的说明。 */
-export const FrameworkTabTitle = "每个请求都要经过的那套框架怎么运转：从进来（中间件 / 过滤器 / 拦截器）到控制器、分派、收尾，各语言按自己的框架画";
+export const FrameworkTabTitle = L("每个请求都要经过的那套框架怎么运转：从进来（中间件 / 过滤器 / 拦截器）到控制器、分派、收尾，各语言按自己的框架画", "How the framework every request passes through works: from the way in (middleware / filters / interceptors) to controllers, dispatch and finishing, drawn per language for its own framework");
 
 /** 消息种类的中文；没见过的原样返回，null 返回空串。 */
-export const MessageKindLabels: Record<string, string> = { command: "命令", query: "查询", event: "事件" };
+export const MessageKindLabels: Record<string, string> = { command: L("命令", "Command"), query: L("查询", "Query"), event: L("事件", "Event") };
 
 export function messageKindLabel(kind: string | null): string {
   if (!kind) return "";
@@ -26,14 +27,17 @@ export function isPlaceholder(node: Pick<FlowNodeDto, "kind">): boolean {
 
 /** 占位节点那一行的文字：「254 个 Handler ▸」「26 个控制器 ▸」「12 个页面 ▸」——入口占位的名字用服务端给的 label（控制器 / 路由 / 页面 / 入口……）。 */
 export function placeholderText(node: Pick<FlowNodeDto, "kind" | "count"> & { label?: string }): string {
-  if (node.kind === "handlers") return `${node.count} 个 Handler ▸`;
-  return `${node.count} 个${node.label?.trim() || "控制器"} ▸`;
+  if (node.kind === "handlers") return L(`${node.count} 个 Handler ▸`, `${node.count} ${node.count === 1 ? "handler" : "handlers"} ▸`);
+  return L(`${node.count} 个${node.label?.trim() || "控制器"} ▸`, `${node.count} ${node.label?.trim() || "controllers"} ▸`);
 }
+
+/** 骨架里没有入口占位时的默认名（"控制器"）。 */
+export const ControllersLabel = L("控制器", "Controllers"); // 英文须与服务端框架流程的标签一致（frameworkHtml 按它认控制器节点）
 
 /** 入口占位（kind = controllers）的名字：控制器 / 路由 / 页面 / 入口（…）；骨架里没有就是"控制器"。 */
 export function entriesLabel(dto: Pick<FrameworkFlowDto, "flow">): string {
   const find = (n: FlowNodeDto): FlowNodeDto | null => n.kind === "controllers" ? n : n.children.reduce<FlowNodeDto | null>((hit, c) => hit ?? find(c), null);
-  return find(dto.flow.root)?.label?.trim() || "控制器";
+  return find(dto.flow.root)?.label?.trim() || ControllersLabel;
 }
 
 /** actor 对应的阶段：服务端的 actor key 就是阶段 key（也接受 "stage|key" 这种带前缀的），再按 label 兜底。 */
@@ -46,7 +50,7 @@ export function stageOfActor(actor: FlowActorDto, stages: readonly FrameworkStag
 export function stageColumnLabel(actor: FlowActorDto, stages: readonly FrameworkStageDto[]): string {
   const stage = stageOfActor(actor, stages);
   const label = stage?.label || actor.label;
-  return stage && !stage.orderKnown ? `${label}（顺序未知）` : label;
+  return stage && !stage.orderKnown ? L(`${label}（顺序未知）`, `${label} (order unknown)`) : label;
 }
 
 // ---------- Handler 清单 ----------
@@ -188,12 +192,12 @@ export function pickFrameworkContainer(nodes: readonly ArchNodeDto[], preferredK
 
 /** 入口流程 / 调用图时序的标题里，行为链那一行：「经框架流程 ▸ 行为 ×N」；没有行为返回 null。 */
 export function frameworkJumpText(behaviors: readonly string[]): string | null {
-  return behaviors.length > 0 ? `经框架流程 ▸ 行为 ×${behaviors.length}` : null;
+  return behaviors.length > 0 ? L(`经框架流程 ▸ 行为 ×${behaviors.length}`, `Via Framework Flow ▸ behaviors ×${behaviors.length}`) : null;
 }
 
 /** 那一行的悬停说明：行为按服务端给的顺序列出。 */
 export function frameworkJumpTitle(behaviors: readonly string[]): string {
-  return `行为链：${behaviors.join(" → ")}\n点击切到框架流程（同一个容器），看中间件、分派器、行为链、Handler、收尾各阶段`;
+  return L(`行为链：${behaviors.join(" → ")}\n点击切到框架流程（同一个容器），看中间件、分派器、行为链、Handler、收尾各阶段`, `Behavior chain: ${behaviors.join(" → ")}\nClick to switch to the Framework Flow (same container) and see the middleware, dispatcher, behavior chain, handler and finishing stages`);
 }
 
 /** 跳到哪个容器的框架流程：流程所在容器（FlowDto.containerKey）在容器图里的节点；对不上返回 null。 */
@@ -205,7 +209,7 @@ export function frameworkJumpTarget(dto: Pick<FlowDto, "containerKey">, nodes: r
 export function frameworkSummary(stages: readonly FrameworkStageDto[], handlers: readonly FrameworkHandlerGroupDto[]): string {
   const parts = stages.map((s) => {
     const n = s.key === "handler" ? handlerTotal(handlers) : s.symbols.length;
-    return `${s.label} ${n}${s.orderKnown ? "" : "（顺序未知）"}`;
+    return `${s.label} ${n}${s.orderKnown ? "" : L("（顺序未知）", " (order unknown)")}`;
   });
   return parts.join(" → ");
 }

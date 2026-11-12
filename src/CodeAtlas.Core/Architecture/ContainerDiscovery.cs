@@ -55,7 +55,7 @@ public static class ContainerDiscovery
         }
         foreach (var n in inv.NodeServices)
         {
-            var evidence = new List<Evidence> { new(n.File, null, n.IsVsCodeExtension ? "engines.vscode（VS Code 扩展）" : n.IsCli ? "bin（命令行）" : $"server={n.Server}") };
+            var evidence = new List<Evidence> { new(n.File, null, n.IsVsCodeExtension ? L("engines.vscode（VS Code 扩展）", "engines.vscode (VS Code extension)") : n.IsCli ? L("bin（命令行）", "bin (command line)") : $"server={n.Server}") };
             if (n.Dockerfile is not null) evidence.Add(new Evidence(n.Dockerfile));
             evidence.AddRange(n.PortEvidence ?? []);
             // VS Code 扩展：扩展宿主与 webview 在同一目录下，合成一个容器

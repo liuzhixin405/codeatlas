@@ -23,54 +23,62 @@ import { RelationsRenderer } from "./relationsRenderer";
 import { RelationsHistory } from "./relationsState";
 import { Renderer } from "./renderer";
 import { isFocusableNode, SequenceDiagram } from "./seqDiagram";
+import { staleBarHtml } from "./staleNotice";
+import { pathLegend, PathPicker, pathStats, pickPlaceholder } from "./pathView";
+import { searchNameFor, stepText, type TrailStep } from "./trail";
+import { exportFileName, flowSvg, graphSvg, sceneFromCy, type FlowPalette } from "./exportImage";
+import { L, listSep } from "./l10n";
+import type { CallPathsDto } from "./types";
 import type { ArchDto, ArchEdgeDto, ArchNodeDto, DsmComponentDto, DsmDto, EntryDto, EvidenceDto, FlowDto, FlowNodeDto, FrameworkFlowDto, MapEdgeDto, MapGroupDto, NarrativeKind, NeighborDto, RelationComponentDto, RelationEdgeDto, RelationNodeDto, RelationsDto, SymbolDto } from "./types";
 
 // ---------- DOM 骨架 ----------
 
 const app = document.getElementById("app")!;
-const RelationsHint = "在编辑器里右键一个方法或类，或在调用图里选一个节点";
+const RelationsHint = L("在编辑器里右键一个方法或类，或在调用图里选一个节点", "Right-click a method or class in the editor, or select a node in the Call Graph");
 app.innerHTML = `
   <header>
-    <span id="nav" class="seg"><button id="nav-back" class="tab" disabled title="没有可后退的（Alt+←）">←</button><button id="nav-fwd" class="tab" disabled title="没有可前进的（Alt+→）">→</button></span>
-    <div id="mode"><button id="mode-graph" class="tab active">调用图</button><button id="mode-rel" class="tab" title="以一个类为中心看类与类之间的依赖，按组件分框">模块关系</button><button id="mode-map" class="tab">项目地图</button></div>
-    <span id="call-view" class="seg"><button class="tab" data-view="seq" title="时序：从焦点方法往下，按调用顺序从上往下、按项目分列（和入口流程同一种图）">时序</button><button class="tab" data-view="graph" title="网状：焦点的调用与被调用画成一张网，可以往上追调用者">网状</button></span>
-    <input id="search" placeholder="搜索符号（前缀，多个词用空格）" autocomplete="off" />
+    <span id="nav" class="seg"><button id="nav-back" class="tab" disabled title="${L("没有可后退的（Alt+←）", "Nothing to go back to (Alt+←)")}">←</button><button id="nav-fwd" class="tab" disabled title="${L("没有可前进的（Alt+→）", "Nothing to go forward to (Alt+→)")}">→</button><button id="nav-share" class="tab" title="${L("复制可分享的浏览路径链接：时间线里的调用图 / 模块关系 / 调用路径，同事在同一个仓库里点开就能重放", "Copy a shareable trail link: the Call Graph / Module Relations / call path steps in the timeline; colleagues click it in the same repository to replay")}">${L("⇪ 分享", "⇪ Share")}</button></span>
+    <div id="mode"><button id="mode-graph" class="tab active">${L("调用图", "Call Graph")}</button><button id="mode-rel" class="tab" title="${L("以一个类为中心看类与类之间的依赖，按组件分框", "Dependencies between classes around a center class, boxed by component")}">${L("模块关系", "Module Relations")}</button><button id="mode-map" class="tab">${L("项目地图", "Project Map")}</button></div>
+    <span id="call-view" class="seg"><button class="tab" data-view="seq" title="${L("时序：从焦点方法往下，按调用顺序从上往下、按项目分列（和入口流程同一种图）", "Sequence: from the focus method downward, top to bottom in call order, one column per project (same diagram as Entry Flow)")}">${L("时序", "Sequence")}</button><button class="tab" data-view="graph" title="${L("网状：焦点的调用与被调用画成一张网，可以往上追调用者", "Graph: the focus's callees and callers drawn as a network; you can trace callers upward")}">${L("网状", "Graph")}</button></span>
+    <input id="search" placeholder="${L("搜索符号（前缀，多个词用空格）", "Search symbols (prefix, separate words with spaces)")}" autocomplete="off" />
     <div id="dropdown"></div>
     <nav id="crumbs"></nav>
-    <span id="rel-opts" style="display:none"><span id="rel-depth" class="seg" title="1 = 只看与中心直接相连的类；2 = 再往外一层"><span class="seg-label">深度</span><button class="tab active" data-depth="1">1</button><button class="tab" data-depth="2">2</button></span><span id="rel-trunc" class="warn" style="display:none" title="服务端按与中心之间的边权重保留了前若干个">节点过多，只显示最相关的 40 个</span></span>
-    <label class="opt" title="聚焦时自动沿调用/分发边向下展开到叶子"><input type="checkbox" id="auto-chain" checked /> 自动向下</label>
-    <label class="opt" title="每个节点自动展开几个最像主流程的分支（调用与分发合计），其余折成「还有 N 个」"><select id="branch-width"><option value="1">主线</option><option value="2" selected>2 分支</option><option value="3">3 分支</option><option value="5">5 分支</option><option value="30">全部</option></select></label>
-    <button id="chain-down" class="secondary" title="从焦点沿调用链向下展开到底">↓ 到底</button>
-    <button id="chain-up" class="secondary" title="从焦点沿调用者向上追到源头">↑ 到源头</button>
-    <label class="opt" title="把继承 / 实现（类型之间的关系）也画进调用图。默认不画：它们不是「它调谁」；看类与类之间的关系请用「模块关系」视图"><input type="checkbox" id="show-types" /> 类型关系</label>
-    <label class="opt" title="显示参数/字段等类型引用"><input type="checkbox" id="show-refs" /> 类型引用</label>
-    <label class="opt" title="把测试项目里的调用者/被调用者也画出来"><input type="checkbox" id="show-tests" /> 测试代码</label>
-    <label class="opt" title="显示分发管道本身：对 QueryAsync/SendAsync 的调用和消息对象的构造"><input type="checkbox" id="show-conduit" /> 分发细节</label>
-    <label class="opt" title="编辑器光标移进哪个方法，调用图就以它为焦点（停下约 0.4 秒后换）"><input type="checkbox" id="follow-cursor" /> 跟随光标</label>
-    <button id="reindex" class="secondary" title="增量索引">⟳ 索引</button>
+    <span id="rel-opts" style="display:none"><span id="rel-depth" class="seg" title="${L("1 = 只看与中心直接相连的类；2 = 再往外一层", "1 = only classes directly connected to the center; 2 = one more layer out")}"><span class="seg-label">${L("深度", "Depth")}</span><button class="tab active" data-depth="1">1</button><button class="tab" data-depth="2">2</button></span><span id="rel-trunc" class="warn" style="display:none" title="${L("服务端按与中心之间的边权重保留了前若干个", "The server kept the top nodes by edge weight to the center")}">${L("节点过多，只显示最相关的 40 个", "Too many nodes; showing the 40 most relevant")}</span></span>
+    <label class="opt" title="${L("聚焦时自动沿调用/分发边向下展开到叶子", "On focus, automatically expand down along call/dispatch edges to the leaves")}"><input type="checkbox" id="auto-chain" checked /> ${L("自动向下", "Auto-expand")}</label>
+    <label class="opt" title="${L("每个节点自动展开几个最像主流程的分支（调用与分发合计），其余折成「还有 N 个」", "How many main-flow-like branches each node auto-expands (calls and dispatches combined); the rest fold into \"N more\"")}"><select id="branch-width"><option value="1">${L("主线", "Main line")}</option><option value="2" selected>${L("2 分支", "2 branches")}</option><option value="3">${L("3 分支", "3 branches")}</option><option value="5">${L("5 分支", "5 branches")}</option><option value="30">${L("全部", "All")}</option></select></label>
+    <button id="chain-down" class="secondary" title="${L("从焦点沿调用链向下展开到底", "Expand down the call chain from the focus to the bottom")}">${L("↓ 到底", "↓ To bottom")}</button>
+    <button id="chain-up" class="secondary" title="${L("从焦点沿调用者向上追到源头", "Trace callers up from the focus to the source")}">${L("↑ 到源头", "↑ To source")}</button>
+    <button id="path-to" class="secondary" title="${L("求从焦点到另一个符号的调用路径（含分派边）：点它，再在搜索框里选终点；网状图里也可以右键节点", "Find call paths from the focus to another symbol (including dispatch edges): click, then pick the end in the search box; in Graph you can also right-click a node")}">${L("⇢ 路径到…", "⇢ Path to…")}</button>
+    <label class="opt" title="${L("把继承 / 实现（类型之间的关系）也画进调用图。默认不画：它们不是「它调谁」；看类与类之间的关系请用「模块关系」视图", "Also draw inheritance / implementation (relations between types) in the Call Graph. Off by default: they are not \"what it calls\"; use the Module Relations view for class-to-class relations")}"><input type="checkbox" id="show-types" /> ${L("类型关系", "Type relations")}</label>
+    <label class="opt" title="${L("显示参数/字段等类型引用", "Show type references such as parameters/fields")}"><input type="checkbox" id="show-refs" /> ${L("类型引用", "Type references")}</label>
+    <label class="opt" title="${L("把测试项目里的调用者/被调用者也画出来", "Also draw callers/callees from test projects")}"><input type="checkbox" id="show-tests" /> ${L("测试代码", "Tests")}</label>
+    <label class="opt" title="${L("显示分发管道本身：对 QueryAsync/SendAsync 的调用和消息对象的构造", "Show the dispatch plumbing itself: calls to QueryAsync/SendAsync and construction of message objects")}"><input type="checkbox" id="show-conduit" /> ${L("分发细节", "Dispatch details")}</label>
+    <label class="opt" title="${L("编辑器光标移进哪个方法，调用图就以它为焦点（停下约 0.4 秒后换）", "The Call Graph focuses on whichever method the editor cursor moves into (switches after a ~0.4 s pause)")}"><input type="checkbox" id="follow-cursor" /> ${L("跟随光标", "Follow cursor")}</label>
+    <button id="export-img" class="secondary" title="${L("把当前的图导出成 SVG / PNG（贴 PR、文档用）", "Export the current diagram as SVG / PNG (for PRs and docs)")}">${L("⤓ 导出", "⤓ Export")}</button>
+    <button id="reindex" class="secondary" title="${L("增量索引", "Incremental index")}">${L("⟳ 索引", "⟳ Index")}</button>
   </header>
-  <main id="cy"><div id="hint">在编辑器里右键「CodeTrail Graph → 在调用图中查看」，或在上面搜索一个符号。</div></main>
-  <main id="seq" style="display:none"><div id="seq-diagram" class="flow-diagram"></div></main>
-  <main id="rel" style="display:none"><div id="rel-cy"></div><div id="rel-hint">${RelationsHint}</div></main>
+  <main id="cy"><div id="hint">${L("在编辑器里右键「CodeTrail Graph → 在调用图中查看」，或在上面搜索一个符号。", "Right-click in the editor and choose \"CodeTrail Graph → Show in Call Graph\", or search for a symbol above.")}</div></main>
+  <main id="seq" style="display:none"><div id="seq-diagram" class="flow-diagram"></div><div id="path-diagram" class="flow-diagram path-diagram" style="display:none"></div></main>
+  <main id="rel" style="display:none"><div id="rel-cy"></div><div id="rel-hint">${RelationsHint}</div><div id="rel-stale" class="stale-bar" style="display:none"></div></main>
   <main id="map" style="display:none">
-    <nav id="map-crumbs"><span id="map-crumb-list"></span><span id="map-view"><button id="view-arch" class="tab" title="容器图：可部署单元、外部系统与它们之间的边">容器</button><button id="view-framework" class="tab" title="${FrameworkTabTitle}">框架流程</button><button id="view-ns" class="tab" title="按命名空间 / 目录分组">命名空间</button></span><label class="opt" id="map-layout-wrap" title="版式预设：AI 的排版建议也只在这些里选" style="display:none"><span>版式</span><select id="map-layout"></select></label></nav>
+    <nav id="map-crumbs"><span id="map-crumb-list"></span><span id="map-view"><button id="view-arch" class="tab" title="${L("容器图：可部署单元、外部系统与它们之间的边", "Container diagram: deployable units, external systems, and the edges between them")}">${L("容器", "Containers")}</button><button id="view-framework" class="tab" title="${FrameworkTabTitle}">${L("框架流程", "Framework Flow")}</button><button id="view-ns" class="tab" title="${L("按命名空间 / 目录分组", "Group by namespace / directory")}">${L("命名空间", "Namespaces")}</button></span><label class="opt" id="map-layout-wrap" title="${L("版式预设：AI 的排版建议也只在这些里选", "Layout presets: AI layout suggestions also pick only from these")}" style="display:none"><span>${L("版式", "Layout")}</span><select id="map-layout"></select></label></nav>
     <div id="arch-cy" style="display:none"></div><div id="dsm-view" style="display:none"></div><div id="flow-view" style="display:none"></div><div id="fw-view" style="display:none"></div><div id="map-cy"></div>
     <aside id="narration"></aside>
   </main>
-  <footer id="details"><span class="muted">未选中</span></footer>
+  <footer id="details"><span class="muted">${L("未选中", "Nothing selected")}</span></footer>
   <div id="overlay"><div class="card">
-    <h2 id="ov-title">正在连接服务…</h2>
+    <h2 id="ov-title">${L("正在连接服务…", "Connecting to server…")}</h2>
     <p id="ov-text"></p>
     <div id="progress"><div></div></div>
-    <button id="ov-index" style="display:none">建立索引</button>
+    <button id="ov-index" style="display:none">${L("建立索引", "Build index")}</button>
   </div></div>
   <div id="chooser"><div class="dialog">
-    <header id="ch-title">选择要加入图的目标</header>
+    <header id="ch-title">${L("选择要加入图的目标", "Choose targets to add to the graph")}</header>
     <div class="list" id="ch-list"></div>
     <div class="actions">
-      <button class="secondary" id="ch-all">全选</button>
-      <button class="secondary" id="ch-cancel">取消</button>
-      <button id="ch-ok">加入</button>
+      <button class="secondary" id="ch-all">${L("全选", "Select all")}</button>
+      <button class="secondary" id="ch-cancel">${L("取消", "Cancel")}</button>
+      <button id="ch-ok">${L("加入", "Add")}</button>
     </div>
   </div></div>
   <div id="ctxmenu"></div>
@@ -165,13 +173,189 @@ const callView = new CallView({
   storage: () => window.localStorage,
   loadFlow: loadSeqFlow,
   showSeq,
-  focusGraph: (s) => focusSymbol(s),
+  focusGraph: (s) => { closePath(); return focusSymbol(s); },
   chainUpGraph: (s) => expandChain(GraphState.nodeIdFor(s), "in"),
   graphFocus: () => (state.focusNodeId ? state.getNode(state.focusNodeId)?.symbol ?? null : null),
-  onModeChange: (m: CallViewMode) => { graphSeq++; symbolRequestSeq++; applyCallViewChrome(); showCallDetails(); if (m === "graph" && graphStale) void refreshFocus(); },
+  onModeChange: (m: CallViewMode) => { graphSeq++; symbolRequestSeq++; closePath(); applyCallViewChrome(); showCallDetails(); if (m === "graph" && graphStale) void refreshFocus(); },
   onHistoryChange: () => renderCrumbs(),
   onVisit: (s) => recordCall(s, "seq"),
 });
+
+// ---------- 两点间调用路径（见 pathView.ts）----------
+
+const pathPicker = new PathPicker();
+/** 正在显示的路径结果；null = 没在看路径（画布区照常是时序 / 网状）。 */
+let pathDto: CallPathsDto | null = null;
+let pathSeq = 0;
+const SearchPlaceholder = searchEl.placeholder;
+/** 路径图：时序图渲染器，整条路径摊开；双击行 = 关掉路径、以它为焦点。 */
+const pathDiagram = new SequenceDiagram($("path-diagram"), {
+  header: pathHeader,
+  toggleOnRowClick: false,
+  collapseDepth: Infinity,
+  onRowSelect: (node) => showSeqNodeDetails(node),
+  onRowDoubleClick: (node) => focusSeqNode(node),
+});
+
+/** 调用图当前的焦点符号（时序 / 网状各自的）。 */
+function callFocus(): SymbolDto | null {
+  return callView.mode === "seq" ? callView.history.current : (state.focusNodeId ? state.getNode(state.focusNodeId)?.symbol ?? null : null);
+}
+
+function setPathPicking(on: boolean): void {
+  $("path-to").classList.toggle("active", on);
+  searchEl.placeholder = on && pathPicker.from ? pickPlaceholder(nodeLabel(pathPicker.from)) : SearchPlaceholder;
+}
+
+function togglePathPicker(): void {
+  if (pathPicker.armed) { pathPicker.cancel(); setPathPicking(false); return; }
+  const err = pathPicker.arm(callFocus());
+  if (err) { toast(err); return; }
+  setPathPicking(true);
+  searchEl.focus();
+}
+
+async function showPath(from: SymbolDto, to: SymbolDto): Promise<void> {
+  if (!api) return;
+  const seq = ++pathSeq;
+  const a = api;
+  let dto: CallPathsDto | null;
+  try { dto = await a.paths(from.id, to.id); }
+  catch (e) { if (seq === pathSeq) toast(L(`取调用路径失败：${String(e)}`, `Failed to load call paths: ${String(e)}`)); return; }
+  if (seq !== pathSeq || a !== api) return;
+  if (!dto) { toast(L("服务版本太旧（没有 /api/symbols/{id}/paths），或符号已不在索引里", "The server is too old (no /api/symbols/{id}/paths), or the symbol is no longer in the index")); return; }
+  if (mode !== "graph") setMode("graph");
+  pathDto = dto;
+  applyCallViewChrome();
+  pathDiagram.render(dto.flow);
+  detailsEl.innerHTML = `<span class="kind">${L("路径", "Paths")}</span><span class="mono">${esc(dto.fromLabel)} → ${esc(dto.toLabel)}</span><span class="muted">${esc(pathStats(dto))}</span>`;
+  nav.record({ key: `path:${from.id}:${to.id}`, label: L(`调用路径 · ${nodeLabel(from)} → ${nodeLabel(to)}`, `Call paths · ${nodeLabel(from)} → ${nodeLabel(to)}`), restore: () => showPath(from, to),
+    share: { k: "path", f: from.qualifiedName, t: to.qualifiedName } });
+}
+
+/** 关掉路径图，回到时序 / 网状。 */
+function closePath(): void {
+  if (!pathDto) return;
+  pathDto = null;
+  pathSeq++;
+  applyCallViewChrome();
+}
+
+function pathHeader(flow: FlowDto): HTMLElement {
+  const d = pathDto;
+  const head = document.createElement("div");
+  head.className = "flow-head";
+  head.innerHTML = `<div class="flow-title"><span class="kind">${L("路径", "Paths")}</span><span class="label" title="${esc(flow.entryLabel)}">${esc(d ? `${d.fromLabel} → ${d.toLabel}` : flow.entryLabel)}</span>` +
+    (d ? `<span class="muted">${esc(pathStats(d))}</span>` : "") + `<a class="path-close" title="${L("回到调用图", "Back to the Call Graph")}">${L("× 关闭", "× Close")}</a></div>` +
+    (d?.note ? `<div class="flow-note">${esc(d.note)}</div>` : "") +
+    `<div class="muted flow-hint path-legend">${esc(pathLegend())}</div>`;
+  head.querySelector<HTMLAnchorElement>(".path-close")?.addEventListener("click", () => { closePath(); showCallDetails(); });
+  const stale = staleBarHtml(flow.staleFiles, esc); // 同调用图（时序）标题下的过期提示
+  if (stale) {
+    const bar = document.createElement("div");
+    bar.className = "stale-bar flow-stale";
+    bar.innerHTML = stale;
+    wireStaleBar(bar);
+    head.appendChild(bar);
+  }
+  return head;
+}
+
+// ---------- 导出图片（见 exportImage.ts）----------
+
+interface ExportTarget { name: string; svg(): string; png(): Promise<string> }
+
+function themeColor(name: string, fallback: string): string {
+  return getComputedStyle(document.body).getPropertyValue(name).trim() || fallback;
+}
+
+function flowPalette(): FlowPalette {
+  return {
+    bg: themeColor("--vscode-editor-background", "#ffffff"),
+    fg: themeColor("--vscode-editor-foreground", "#1f2328"),
+    muted: themeColor("--vscode-descriptionForeground", "#6e7781"),
+    border: themeColor("--vscode-editorWidget-border", "#d0d7de"),
+  };
+}
+
+/** SVG 文本画进 canvas 转 PNG（base64，不带 data: 前缀）。时序图是 HTML，没有 cy.png，走这条。 */
+function svgToPng(svg: string, scale = 2): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement("canvas");
+      c.width = Math.ceil(img.width * scale);
+      c.height = Math.ceil(img.height * scale);
+      const ctx = c.getContext("2d");
+      if (!ctx) { reject(new Error("canvas")); return; }
+      ctx.scale(scale, scale);
+      ctx.drawImage(img, 0, 0);
+      resolve(c.toDataURL("image/png").replace(/^data:image\/png;base64,/, ""));
+    };
+    img.onerror = () => reject(new Error(L("SVG 转 PNG 失败", "SVG to PNG conversion failed")));
+    img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+  });
+}
+
+function seqTarget(diagram: SequenceDiagram | null | undefined, name: string, title: string, weakDashed = false): ExportTarget | string {
+  const layout = diagram?.layout();
+  if (!layout) return L("当前没有可导出的图", "Nothing to export");
+  const svg = (): string => flowSvg(layout, title, { palette: flowPalette(), weakDashed });
+  return { name, svg, png: () => svgToPng(svg()) };
+}
+
+function cyTarget(cy: import("cytoscape").Core | null | undefined, name: string, title: string): ExportTarget | string {
+  if (!cy || cy.elements(":visible").empty()) return L("当前没有可导出的图", "Nothing to export");
+  const bg = themeColor("--vscode-editor-background", "#ffffff");
+  return { name, svg: () => graphSvg(sceneFromCy(cy, bg, title)), png: async () => cy.png({ output: "base64", full: true, scale: 2, bg }) };
+}
+
+/** 当前看的是哪张图：调用图（时序 / 网状 / 路径）、模块关系、项目地图（容器图 / 命名空间 / 入口流程 / 框架流程）。组件矩阵是表格，不导出。 */
+function exportTarget(): ExportTarget | string {
+  if (mode === "graph") {
+    if (pathDto) return seqTarget(pathDiagram, `paths-${pathDto.fromLabel}-${pathDto.toLabel}`, L(`调用路径 ${pathDto.fromLabel} → ${pathDto.toLabel}`, `Call paths ${pathDto.fromLabel} → ${pathDto.toLabel}`), true);
+    const f = callFocus();
+    const label = f ? nodeLabel(f) : "";
+    if (callView.mode === "seq") return seqTarget(seqDiagram, `seq-${label}`, L(`调用 ${label}`, `Calls ${label}`));
+    return cyTarget(renderer?.core, `graph-${label}`, L(`调用图 ${label}`, `Call graph ${label}`));
+  }
+  if (mode === "relations") {
+    const c = relHistory.current;
+    return cyTarget(relRenderer?.core, `relations-${c ? unitLabel(c) : ""}`, L(`模块关系 ${c ? unitLabel(c) : ""}`, `Module relations ${c ? unitLabel(c) : ""}`));
+  }
+  switch (mapView) {
+    case "arch": return cyTarget(archRenderer?.core, "containers", L("容器图", "Containers"));
+    case "ns": return cyTarget(mapRenderer?.core, "namespaces", L("命名空间", "Namespaces"));
+    case "flow": return seqTarget(flowView?.sequence, `flow-${flowEntry ? entryTitle(flowEntry) : ""}`, flowEntry ? L(`入口流程 ${entryTitle(flowEntry)}`, `Entry flow ${entryTitle(flowEntry)}`) : L("入口流程", "Entry flow"));
+    case "framework": return seqTarget(fwView?.sequence, `framework-${fwContainer?.name ?? ""}`, L(`框架流程 ${fwContainer?.name ?? ""}`, `Framework flow ${fwContainer?.name ?? ""}`));
+    case "dsm": return L("组件矩阵是表格，暂不支持导出图片", "The component matrix is a table; image export is not supported");
+    default: return L("当前没有可导出的图", "Nothing to export");
+  }
+}
+
+async function exportImage(t: ExportTarget, format: "svg" | "png"): Promise<void> {
+  let data: string;
+  try { data = format === "svg" ? t.svg() : await t.png(); }
+  catch (e) { toast(L(`导出失败：${String(e)}`, `Export failed: ${String(e)}`)); return; }
+  const name = exportFileName(t.name, format);
+  if (host.isVsCode) { host.post({ type: "saveImage", format, data, name }); return; }
+  // 浏览器调试模式：直接下载
+  const a = document.createElement("a");
+  a.href = format === "svg" ? "data:image/svg+xml;charset=utf-8," + encodeURIComponent(data) : "data:image/png;base64," + data;
+  a.download = name;
+  a.click();
+}
+
+function openExportMenu(e: MouseEvent): void {
+  e.stopPropagation();
+  const t = exportTarget();
+  if (typeof t === "string") { toast(t); return; }
+  const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+  openMenu([
+    { label: L("导出 SVG…", "Export SVG…"), run: () => void exportImage(t, "svg") },
+    { label: L("导出 PNG…", "Export PNG…"), run: () => void exportImage(t, "png") },
+  ], r.left, r.bottom + 2);
+}
 
 // ---------- 后退 / 前进（跨模式的一条时间线，见 navHistory.ts）----------
 
@@ -189,7 +373,8 @@ function renderNavButtons(): void {
 
 /** 调用图：焦点 + 画法（时序 / 网状）。 */
 function recordCall(s: SymbolDto, view: CallViewMode): void {
-  nav.record({ key: `call:${view}:${s.id}`, label: `调用图（${view === "seq" ? "时序" : "网状"}）· ${nodeLabel(s)}`, restore: () => restoreCall(s, view) });
+  nav.record({ key: `call:${view}:${s.id}`, label: L(`调用图（${view === "seq" ? "时序" : "网状"}）· ${nodeLabel(s)}`, `Call Graph (${view === "seq" ? "Sequence" : "Graph"}) · ${nodeLabel(s)}`), restore: () => restoreCall(s, view),
+    share: { k: "call", v: view, q: s.qualifiedName } });
 }
 
 async function restoreCall(s: SymbolDto, view: CallViewMode): Promise<void> {
@@ -200,7 +385,8 @@ async function restoreCall(s: SymbolDto, view: CallViewMode): Promise<void> {
 
 /** 模块关系：中心单元。 */
 function recordRel(center: SymbolDto): void {
-  nav.record({ key: `rel:${center.id}`, label: `模块关系 · ${unitLabel(center)}`, restore: () => showRelationsFor(center.id) });
+  nav.record({ key: `rel:${center.id}`, label: L(`模块关系 · ${unitLabel(center)}`, `Module Relations · ${unitLabel(center)}`), restore: () => showRelationsFor(center.id),
+    share: { k: "rel", q: center.qualifiedName } });
 }
 
 /** 项目地图：当前视图与它的上下文（容器、入口、框架流程的容器、命名空间路径）拍一张快照。 */
@@ -212,11 +398,11 @@ function recordMap(): void {
   const fw = view === "framework" ? fwContainer : null;
   const roots = view === "ns" ? mapState.crumbs.slice(1).map((c) => c.root) : [];
   const key = `map:${view}:${view === "dsm" || view === "flow" ? container?.key ?? "" : ""}:${entry?.symbolId ?? ""}:${fw?.key ?? ""}:${roots.join(">")}`;
-  const label = view === "arch" ? "项目地图 · 容器图"
-    : view === "dsm" ? `组件矩阵 · ${container?.name ?? ""}`
-    : view === "flow" ? (entry ? `入口流程 · ${entryTitle(entry)}` : `入口清单 · ${container?.name ?? ""}`)
-    : view === "framework" ? `框架流程 · ${fw?.name ?? ""}`
-    : `命名空间 · ${roots[roots.length - 1] ?? "项目"}`;
+  const label = view === "arch" ? L("项目地图 · 容器图", "Project Map · Containers")
+    : view === "dsm" ? L(`组件矩阵 · ${container?.name ?? ""}`, `Component Matrix · ${container?.name ?? ""}`)
+    : view === "flow" ? (entry ? L(`入口流程 · ${entryTitle(entry)}`, `Entry Flow · ${entryTitle(entry)}`) : L(`入口清单 · ${container?.name ?? ""}`, `Entries · ${container?.name ?? ""}`))
+    : view === "framework" ? L(`框架流程 · ${fw?.name ?? ""}`, `Framework Flow · ${fw?.name ?? ""}`)
+    : L(`命名空间 · ${roots[roots.length - 1] ?? "项目"}`, `Namespaces · ${roots[roots.length - 1] ?? "Project"}`);
   nav.record({ key, label, restore: () => restoreMap(view, container, entry, fw, roots) });
 }
 
@@ -237,6 +423,54 @@ async function restoreMap(view: MapViewKind, container: ArchNodeDto | null, entr
   if (mode !== "map") setMode("map", true, false);
   await loadMapView();
   if (view === "flow" && entry) await selectFlowEntry(findSameEntry(flowEntries, entry) ?? entry);
+}
+
+// ---------- 可分享的浏览路径（见 trail.ts、src/trailUri.ts）----------
+
+function shareTrail(): void {
+  if (!host.isVsCode) { toast(L("（浏览器模式）分享链接要在 VS Code 里用", "(Browser mode) Trail links only work inside VS Code")); return; }
+  const t = nav.trail();
+  host.post({ type: "shareTrail", steps: t.steps, at: t.at });
+}
+
+let replaySeq = 0;
+
+/** 重放分享来的 trail：按限定名找回符号，依次走一遍（时间线里留下同样的步骤），再退回分享时停的那一步。找不到的跳过并提示。 */
+async function replayTrail(steps: TrailStep[], at: number): Promise<void> {
+  if (!api) return;
+  const a = api;
+  const seq = ++replaySeq;
+  const found = new Map<string, SymbolDto | null>();
+  const resolve = async (qn: string): Promise<SymbolDto | null> => {
+    if (found.has(qn)) return found.get(qn)!;
+    const hit = (await a.search(searchNameFor(qn), 500)).find((h) => h.qualifiedName === qn) ?? null;
+    found.set(qn, hit);
+    return hit;
+  };
+  const missing: string[] = [];
+  let after = 0; // 分享时那一步之后又重放了几步：最后退回这么多步
+  let replayed = 0;
+  for (const [i, step] of steps.entries()) {
+    if (seq !== replaySeq || a !== api) return;
+    try {
+      if (step.k === "path") {
+        const [f, t] = [await resolve(step.f), await resolve(step.t)];
+        if (!f || !t) { missing.push(stepText(step)); continue; }
+        await showPath(f, t);
+      } else {
+        const s = await resolve(step.q);
+        if (!s) { missing.push(stepText(step)); continue; }
+        if (step.k === "call") await restoreCall(s, step.v);
+        else await showRelationsFor(s.id);
+      }
+    } catch { missing.push(stepText(step)); continue; }
+    replayed++;
+    if (i > at) after++;
+  }
+  for (let i = 0; i < after && seq === replaySeq; i++) await nav.back();
+  toast(missing.length === 0
+    ? L(`已重放浏览路径（${replayed} 步）`, `Replayed the trail (${replayed} steps)`)
+    : L(`已重放 ${replayed} 步；索引里找不到 ${missing.length} 个：${missing.slice(0, 3).join("、")}`, `Replayed ${replayed} steps; ${missing.length} not found in the index: ${missing.slice(0, 3).join(", ")}`), 5000);
 }
 
 function navBack(): void { if (!nav.isRestoring) void nav.back(); }
@@ -314,38 +548,38 @@ function renderCrumbs(): void {
 }
 
 function edgeKindText(e: GraphEdge): string {
-  if (e.kind === "dispatches") return e.label === "handles" ? "handles（Handler 处理该类型）" : `分发：${e.label} 交给它的 Handler 处理`;
-  if (e.label === "conduit") return "calls（分发管道）";
-  if (e.label === "impl") return e.viaInterface ? `calls（经接口 ${qualifiedLabel(e.viaInterface)} → 唯一实现，已合成一个节点）` : "calls（接口→实现）";
+  if (e.kind === "dispatches") return e.label === "handles" ? L("handles（Handler 处理该类型）", "handles (Handler for this type)") : L(`分发：${e.label} 交给它的 Handler 处理`, `Dispatch: ${e.label} handed to its Handler`);
+  if (e.label === "conduit") return L("calls（分发管道）", "calls (dispatch plumbing)");
+  if (e.label === "impl") return e.viaInterface ? L(`calls（经接口 ${qualifiedLabel(e.viaInterface)} → 唯一实现，已合成一个节点）`, `calls (via interface ${qualifiedLabel(e.viaInterface)} → sole implementation, merged into one node)`) : L("calls（接口→实现）", "calls (interface → implementation)");
   return e.kind;
 }
 
 function confidenceText(c: number): string {
-  if (c >= 1) return "确定（编译器 / 包含关系）";
-  if (c >= 0.95) return "按 import 解析";
-  if (c >= 0.9) return "按类型解析";
-  if (c >= 0.7) return "名字唯一";
-  if (c >= 0.5) return "外部库或弱匹配";
-  return "多候选之一";
+  if (c >= 1) return L("确定（编译器 / 包含关系）", "certain (compiler / containment)");
+  if (c >= 0.95) return L("按 import 解析", "resolved via import");
+  if (c >= 0.9) return L("按类型解析", "resolved by type");
+  if (c >= 0.7) return L("名字唯一", "unique name");
+  if (c >= 0.5) return L("外部库或弱匹配", "external library or weak match");
+  return L("多候选之一", "one of several candidates");
 }
 
 function showNodeDetails(n: GraphNode | null): void {
   selectedNode = n;
-  if (!n) { detailsEl.innerHTML = '<span class="muted">未选中</span>'; return; }
+  if (!n) { detailsEl.innerHTML = `<span class="muted">${L("未选中", "Nothing selected")}</span>`; return; }
   if (n.type === "symbol" && n.symbol) {
     const s = n.symbol;
     detailsEl.innerHTML = `<span class="kind">${s.kind}</span><span class="mono">${esc(s.qualifiedName)}</span>` +
       `<span class="muted">${esc(s.path)}:${s.startLine}</span>` +
-      (s.kind !== "external" ? `<a id="open-link">在编辑器中打开</a>` : "") +
+      (s.kind !== "external" ? `<a id="open-link">${L("在编辑器中打开", "Open in editor")}</a>` : "") +
       (s.signature ? `<span class="muted mono" style="margin-left:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.signature)}</span>` : "");
     detailsEl.querySelector<HTMLAnchorElement>("#open-link")?.addEventListener("click", () => openInEditor(s));
-    if (n.expandedIn && state.chainTargets(n.id, "in").length === 0) detailsEl.insertAdjacentHTML("beforeend", '<span class="kind">入口?</span><span class="muted">没有找到调用者</span>');
+    if (n.expandedIn && state.chainTargets(n.id, "in").length === 0) detailsEl.insertAdjacentHTML("beforeend", `<span class="kind">${L("入口?", "Entry?")}</span><span class="muted">${L("没有找到调用者", "No callers found")}</span>`);
   } else if (n.type === "ambiguous" && n.callers) {
-    detailsEl.innerHTML = `<span class="kind">调用者</span><span>${esc(n.label)}：调用者默认不画（调用图先看它调谁），点一下胶囊加入图</span><span class="muted">谁调了它、一路影响到哪些入口：用「影响范围」视图</span>`;
+    detailsEl.innerHTML = `<span class="kind">${L("调用者", "Callers")}</span><span>${esc(n.label)}${L("：调用者默认不画（调用图先看它调谁），点一下胶囊加入图", ": callers are hidden by default (the Call Graph shows what it calls first); click the capsule to add them")}</span><span class="muted">${L("谁调了它、一路影响到哪些入口：用「影响范围」视图", "Who calls it and which entries it affects: use the Impact view")}</span>`;
   } else if (n.type === "ambiguous") {
-    detailsEl.innerHTML = `<span class="kind">${n.externalGroup ? "框架调用" : n.overflow ? "已折叠" : "多候选"}</span><span>${n.label}，双击节点选择要加入的</span>`;
+    detailsEl.innerHTML = `<span class="kind">${n.externalGroup ? L("框架调用", "Framework calls") : n.overflow ? L("已折叠", "Folded") : L("多候选", "Ambiguous")}</span><span>${n.label}${L("，双击节点选择要加入的", "; double-click the node to choose what to add")}</span>`;
   } else {
-    detailsEl.innerHTML = `<span class="kind">悬空</span><span class="mono">${esc(n.id.replace(/^dangling:/, ""))}</span><span class="muted">目标已不在索引中</span>`;
+    detailsEl.innerHTML = `<span class="kind">${L("悬空", "Dangling")}</span><span class="mono">${esc(n.id.replace(/^dangling:/, ""))}</span><span class="muted">${L("目标已不在索引中", "Target is no longer in the index")}</span>`;
   }
 }
 
@@ -354,7 +588,7 @@ function showEdgeDetails(e: GraphEdge | null): void {
   const src = state.getNode(e.source)?.label ?? e.source;
   const dst = state.getNode(e.target)?.label ?? e.target;
   detailsEl.innerHTML = `<span class="kind">${esc(edgeKindText(e))}</span><span class="mono">${esc(src)} → ${esc(dst)}</span>` +
-    `<span class="muted">confidence ${e.confidence.toFixed(2)}（${confidenceText(e.confidence)}）· 第 ${e.line} 行</span>`;
+    `<span class="muted">${L(`confidence ${e.confidence.toFixed(2)}（${confidenceText(e.confidence)}）· 第 ${e.line} 行`, `confidence ${e.confidence.toFixed(2)} (${confidenceText(e.confidence)}) · line ${e.line}`)}</span>`;
 }
 
 function esc(s: string): string {
@@ -363,7 +597,7 @@ function esc(s: string): string {
 
 function openInEditor(s: SymbolDto): void {
   host.post({ type: "open", path: s.path, line: s.startLine, col: s.startCol });
-  if (!host.isVsCode) toast(`（浏览器模式）打开 ${s.path}:${s.startLine}`);
+  if (!host.isVsCode) toast(L(`（浏览器模式）打开 ${s.path}:${s.startLine}`, `(Browser mode) Open ${s.path}:${s.startLine}`));
 }
 
 // ---------- 核心动作 ----------
@@ -418,27 +652,28 @@ async function loadSeqFlow(symbol: SymbolDto): Promise<FlowDto | null> {
 }
 
 function showSeq(view: SeqViewState): void {
+  closePath();
   seqSelected = null;
   seqSelectedSymbol = null;
   hintEl.style.display = "none";
   switch (view.status) {
     case "empty":
-      seqDiagram.clear("在编辑器里右键「CodeTrail Graph → 在调用图中查看」，或在上面搜索一个方法：从它出发往下，按调用顺序画时序图。");
+      seqDiagram.clear(L("在编辑器里右键「CodeTrail Graph → 在调用图中查看」，或在上面搜索一个方法：从它出发往下，按调用顺序画时序图。", "Right-click in the editor and choose \"CodeTrail Graph → Show in Call Graph\", or search for a method above: a sequence diagram is drawn downward from it in call order."));
       break;
     case "loading":
-      seqDiagram.clear(`正在取 ${nodeLabel(view.symbol)} 的调用时序…`);
+      seqDiagram.clear(L(`正在取 ${nodeLabel(view.symbol)} 的调用时序…`, `Loading call sequence of ${nodeLabel(view.symbol)}…`));
       break;
     case "missing": {
-      seqDiagram.clear(`拿不到 ${nodeLabel(view.symbol)} 的调用时序：服务版本太旧（没有 /api/symbols/{id}/flow，重启服务或更新扩展；入口方法仍能出图），或符号已不在索引里。`);
+      seqDiagram.clear(L(`拿不到 ${nodeLabel(view.symbol)} 的调用时序：服务版本太旧（没有 /api/symbols/{id}/flow，重启服务或更新扩展；入口方法仍能出图），或符号已不在索引里。`, `Can't get the call sequence of ${nodeLabel(view.symbol)}: the server is too old (no /api/symbols/{id}/flow; restart the server or update the extension; entry methods still work), or the symbol is no longer in the index.`));
       const b = document.createElement("button");
       b.className = "secondary flow-switch";
-      b.textContent = "切到网状看";
+      b.textContent = L("切到网状看", "Switch to Graph");
       b.onclick = () => void callView.setMode("graph");
       $("seq-diagram").appendChild(b);
       break;
     }
     case "error":
-      seqDiagram.clear(`取调用时序失败：${view.message}`);
+      seqDiagram.clear(L(`取调用时序失败：${view.message}`, `Failed to load call sequence: ${view.message}`));
       break;
     case "ready":
       seqDiagram.render(view.dto);
@@ -454,18 +689,31 @@ function seqHeader(dto: FlowDto): HTMLElement {
   const head = document.createElement("div");
   head.className = "flow-head";
   const label = s ? nodeLabel(s) : dto.entryLabel;
-  const stats = [`${dto.nodes} 个节点`];
-  if (dto.truncated) stats.push("已截断");
+  const stats = [L(`${dto.nodes} 个节点`, `${dto.nodes} ${dto.nodes === 1 ? "node" : "nodes"}`)];
+  if (dto.truncated) stats.push(L("已截断", "truncated"));
   const where = s ? `${s.path}:${s.startLine}` : "";
-  head.innerHTML = `<div class="flow-title"><span class="kind">调用</span><span class="label" title="${esc(s?.qualifiedName ?? dto.entryLabel)}">${esc(label)}</span>` +
+  head.innerHTML = `<div class="flow-title"><span class="kind">${L("调用", "Call")}</span><span class="label" title="${esc(s?.qualifiedName ?? dto.entryLabel)}">${esc(label)}</span>` +
     (dto.route && dto.route !== label ? `<span class="muted">${esc(dto.route)}</span>` : "") +
-    (where ? `<a class="flow-where" title="在编辑器中打开">${esc(where)}</a>` : "") +
-    `<span class="muted">${esc(stats.join("，"))}</span></div>`;
+    (where ? `<a class="flow-where" title="${L("在编辑器中打开", "Open in editor")}">${esc(where)}</a>` : "") +
+    `<span class="muted">${esc(stats.join(L("，", ", ")))}</span></div>`;
   appendFlowHeadExtras(head, dto, (d) => void gotoFramework(d));
-  head.insertAdjacentHTML("beforeend", (s && seqFromEntryFlow.has(s.id) ? `<div class="flow-note">服务还没有「任意方法的时序」接口，这里用的是入口流程的数据</div>` : "") +
-    `<div class="muted flow-hint">单击行看详情，双击行以它为焦点重画，点 ▸ 展开 / 折叠；要看谁调了它，点「↑ 到源头」或用影响范围视图</div>`);
+  head.insertAdjacentHTML("beforeend", (s && seqFromEntryFlow.has(s.id) ? `<div class="flow-note">${L("服务还没有「任意方法的时序」接口，这里用的是入口流程的数据", "The server has no \"sequence for any method\" API yet; using Entry Flow data here")}</div>` : "") +
+    `<div class="muted flow-hint">${L("单击行看详情，双击行以它为焦点重画，点 ▸ 展开 / 折叠；要看谁调了它，点「↑ 到源头」或用影响范围视图", "Click a row for details, double-click to redraw with it as focus, click ▸ to expand / collapse; to see who calls it, click \"↑ To source\" or use the Impact view")}</div>`);
   if (s) head.querySelector<HTMLAnchorElement>(".flow-where")?.addEventListener("click", () => openInEditor(s));
+  const stale = staleBarHtml(dto.staleFiles, esc);
+  if (stale) {
+    const bar = document.createElement("div");
+    bar.className = "stale-bar flow-stale";
+    bar.innerHTML = stale;
+    wireStaleBar(bar);
+    head.appendChild(bar);
+  }
   return head;
+}
+
+/** 过期提示条上的「立即重建」：发一次增量索引（索引完成后视图照常自动刷新，提示随新结果消失）。 */
+function wireStaleBar(bar: HTMLElement): void {
+  bar.querySelector<HTMLButtonElement>("[data-act=reindex]")?.addEventListener("click", (e) => { e.stopPropagation(); void startIndex(false); });
 }
 
 function renderSeqCrumbs(): void {
@@ -483,15 +731,15 @@ function renderSeqCrumbs(): void {
 /** 详情条：时序焦点本身。 */
 function showSeqFocusDetails(): void {
   const v = callView.seqView;
-  if (v.status === "empty") { detailsEl.innerHTML = '<span class="muted">未选中</span>'; return; }
+  if (v.status === "empty") { detailsEl.innerHTML = `<span class="muted">${L("未选中", "Nothing selected")}</span>`; return; }
   const s = v.symbol;
-  const stats = v.status === "ready" ? `<span class="muted">${v.dto.actors.length} 个参与者 · ${v.dto.nodes} 个节点${v.dto.truncated ? " · 已截断" : ""}</span>` : "";
-  detailsEl.innerHTML = `<span class="kind">焦点</span><span class="mono" title="${esc(s.qualifiedName)}">${esc(s.qualifiedName)}</span><span class="muted">${esc(s.path)}:${s.startLine}</span>` +
-    (s.kind !== "external" ? `<a id="open-link">在编辑器中打开</a>` : "") + stats;
+  const stats = v.status === "ready" ? `<span class="muted">${L(`${v.dto.actors.length} 个参与者 · ${v.dto.nodes} 个节点${v.dto.truncated ? " · 已截断" : ""}`, `${v.dto.actors.length} ${v.dto.actors.length === 1 ? "participant" : "participants"} · ${v.dto.nodes} ${v.dto.nodes === 1 ? "node" : "nodes"}${v.dto.truncated ? " · truncated" : ""}`)}</span>` : "";
+  detailsEl.innerHTML = `<span class="kind">${L("焦点", "Focus")}</span><span class="mono" title="${esc(s.qualifiedName)}">${esc(s.qualifiedName)}</span><span class="muted">${esc(s.path)}:${s.startLine}</span>` +
+    (s.kind !== "external" ? `<a id="open-link">${L("在编辑器中打开", "Open in editor")}</a>` : "") + stats;
   detailsEl.querySelector<HTMLAnchorElement>("#open-link")?.addEventListener("click", () => openInEditor(s));
 }
 
-const FlowKindLabels: Record<string, string> = { entry: "焦点", call: "调用", dispatch: "分发", hop: "跨服务", "external-group": "框架调用", more: "已折叠", function: "函数", http: "接口调用", handlers: "Handler", controllers: "控制器" };
+const FlowKindLabels: Record<string, string> = { entry: L("焦点", "Focus"), call: L("调用", "Call"), dispatch: L("分发", "Dispatch"), hop: L("跨服务", "Cross-service"), "external-group": L("框架调用", "Framework calls"), more: L("已折叠", "Folded"), function: L("函数", "Function"), http: L("接口调用", "API call"), handlers: "Handler", controllers: L("控制器", "Controllers") };
 
 /**
  * 详情条：单击的那一行。限定名直接有；文件:行要按 symbolId 查（节点自己带了 path / line 就直接用）。
@@ -505,10 +753,10 @@ function showSeqNodeDetails(node: FlowNodeDto, onFocus: (node: FlowNodeDto) => v
   const loc = node.path ? `${node.path}${node.line ? ":" + node.line : ""}` : focusable ? "…" : "";
   detailsEl.innerHTML = `<span class="kind">${esc(kind)}</span><span class="mono" title="${esc(node.qualifiedName)}">${esc(node.qualifiedName || node.label)}</span>` +
     (loc ? `<span class="muted" id="seq-loc">${esc(loc)}</span>` : "") +
-    (focusable ? `<a id="open-link">在编辑器中打开</a><a id="seq-focus">${onFocus === focusSeqNode ? "设为焦点" : "在调用图中查看"}</a>` : "") +
+    (focusable ? `<a id="open-link">${L("在编辑器中打开", "Open in editor")}</a><a id="seq-focus">${onFocus === focusSeqNode ? L("设为焦点", "Set as focus") : L("在调用图中查看", "Show in Call Graph")}</a>` : "") +
     (node.via ? `<span class="muted">via ${esc(node.via)}</span>` : "") +
     (node.note ? `<span class="muted">${esc(node.note)}</span>` : "") +
-    (node.confidence < 1 ? `<span class="muted">confidence ${node.confidence.toFixed(2)}（${confidenceText(node.confidence)}）</span>` : "");
+    (node.confidence < 1 ? `<span class="muted">${L(`confidence ${node.confidence.toFixed(2)}（${confidenceText(node.confidence)}）`, `confidence ${node.confidence.toFixed(2)} (${confidenceText(node.confidence)})`)}</span>` : "");
   detailsEl.querySelector<HTMLAnchorElement>("#open-link")?.addEventListener("click", () => openSeqNode(node));
   detailsEl.querySelector<HTMLAnchorElement>("#seq-focus")?.addEventListener("click", () => onFocus(node));
   if (!focusable || node.path || node.symbolId === null || !api) return;
@@ -517,7 +765,7 @@ function showSeqNodeDetails(node: FlowNodeDto, onFocus: (node: FlowNodeDto) => v
     if (seqSelected !== node) return;
     seqSelectedSymbol = s;
     const el = document.getElementById("seq-loc");
-    if (el) el.textContent = s ? `${s.path}:${s.startLine}` : "符号已不在索引里";
+    if (el) el.textContent = s ? `${s.path}:${s.startLine}` : L("符号已不在索引里", "Symbol is no longer in the index");
   });
 }
 
@@ -526,14 +774,14 @@ async function openSeqNode(node: FlowNodeDto): Promise<void> {
   if (node.path) { openLocation(node.path, node.line ?? 1, 1, node.pos ?? null); return; }
   if (node.symbolId === null || !api) return;
   const s = seqSelected === node && seqSelectedSymbol ? seqSelectedSymbol : await api.symbol(node.symbolId);
-  if (!s) { toast("符号在索引里找不到了"); return; }
+  if (!s) { toast(L("符号在索引里找不到了", "Symbol not found in the index")); return; }
   openLocation(s.path, s.startLine, s.startCol, node.pos ?? null);
 }
 
 /** 双击 / 「设为焦点」：以这一行为新焦点重画时序图（记进面包屑）。 */
 function focusSeqNode(node: FlowNodeDto): void {
   if (!isFocusableNode(node) || node.symbolId === null) return;
-  if (node.symbolId === callView.history.current?.id) { toast("已经是焦点"); return; }
+  if (node.symbolId === callView.history.current?.id) { toast(L("已经是焦点", "Already the focus")); return; }
   void focusSymbolById(node.symbolId);
 }
 
@@ -600,7 +848,7 @@ async function expandChain(startId: string, side: "out" | "in"): Promise<void> {
     render();
   }
   if (side === "out") { highlightTrunk(); render(); }
-  if (stoppedAt.length > 0) toast(`${stoppedAt.slice(0, 3).join("、")}${stoppedAt.length > 3 ? " 等" : ""} 分支超过 ${ChainMaxFanout} 个，已停止自动展开，双击可继续`, 5000);
+  if (stoppedAt.length > 0) toast(L(`${stoppedAt.slice(0, 3).join(listSep())}${stoppedAt.length > 3 ? " 等" : ""} 分支超过 ${ChainMaxFanout} 个，已停止自动展开，双击可继续`, `${stoppedAt.slice(0, 3).join(listSep())}${stoppedAt.length > 3 ? " etc." : ""}: more than ${ChainMaxFanout} branches, auto-expand stopped; double-click to continue`), 5000);
 }
 
 /**
@@ -617,13 +865,13 @@ async function expandNode(node: GraphNode, side: "out" | "in" = "out"): Promise<
   remember(neighbors);
   // 超过每侧上限的邻居由 GraphState 自动折成"还有 N 个"胶囊，点开再选；没有邻居也算展开过，再双击就跳代码
   state.expand(node.id, neighbors, side, expandOptions());
-  if (neighbors.length === 0) toast(side === "out" ? "它没有再调别的（仓库内）" : "没有找到调用者");
+  if (neighbors.length === 0) toast(side === "out" ? L("它没有再调别的（仓库内）", "It calls nothing else (in this repo)") : L("没有找到调用者", "No callers found"));
   render();
 }
 
 async function expandCapsule(node: GraphNode): Promise<void> {
   const members = state.getCapsuleMembers(node.id);
-  const title = node.callers ? `${node.label}，选择要加入图的调用者` : node.overflow ? `${node.label}，选择要加入图的` : `${node.label}：这些同名符号都可能是真正的目标`;
+  const title = node.callers ? L(`${node.label}，选择要加入图的调用者`, `${node.label}: choose callers to add to the graph`) : node.overflow ? L(`${node.label}，选择要加入图的`, `${node.label}: choose what to add to the graph`) : L(`${node.label}：这些同名符号都可能是真正的目标`, `${node.label}: any of these same-named symbols may be the real target`);
   const chosen = await chooseNeighbors(title, members);
   if (!chosen || chosen.length === 0) return;
   state.expandAmbiguous(node.id, chosen.map((m) => m.edgeId));
@@ -669,25 +917,27 @@ function showContextMenu(node: GraphNode, x: number, y: number): void {
   const items: MenuItem[] = [];
   if (node.type === "symbol" && node.symbol) {
     const s = node.symbol;
-    items.push({ label: "设为焦点", run: () => void focusSymbol(s) });
-    if (s.kind !== "external") items.push({ label: "在模块关系中查看", run: () => showRelationsFor(s.id) });
+    items.push({ label: L("设为焦点", "Set as focus"), run: () => void focusSymbol(s) });
+    if (s.kind !== "external") items.push({ label: L("在模块关系中查看", "Show in Module Relations"), run: () => showRelationsFor(s.id) });
     if (node.expandable) {
-      if (node.expandedOut || node.expandedIn) items.push({ label: "折叠邻居", run: () => { state.collapse(node.id); render(); } });
-      if (!node.expandedOut) items.push({ label: "展开一层（它调谁）", run: () => void expandNode(node, "out") });
+      if (node.expandedOut || node.expandedIn) items.push({ label: L("折叠邻居", "Collapse neighbors"), run: () => { state.collapse(node.id); render(); } });
+      if (!node.expandedOut) items.push({ label: L("展开一层（它调谁）", "Expand one level (callees)"), run: () => void expandNode(node, "out") });
       const capsule = state.callersCapsule(node.id);
-      if (capsule) items.push({ label: `加入调用者（${capsule.label}）`, run: () => expandCallersCapsule(capsule) });
-      else if (!node.expandedIn) items.push({ label: "展开调用者（谁调它）", run: () => void expandNode(node, "in") });
+      if (capsule) items.push({ label: L(`加入调用者（${capsule.label}）`, `Add callers (${capsule.label})`), run: () => expandCallersCapsule(capsule) });
+      else if (!node.expandedIn) items.push({ label: L("展开调用者（谁调它）", "Expand callers (who calls it)"), run: () => void expandNode(node, "in") });
     }
-    if (node.id !== state.focusNodeId) items.push({ label: "从图中隐藏", run: () => { state.hide(node.id); render(); } });
-    if (s.kind !== "external") items.push({ label: "在编辑器中打开", run: () => openInEditor(s) });
+    const focus = state.focusNodeId ? state.getNode(state.focusNodeId)?.symbol ?? null : null;
+    if (focus && focus.id !== s.id) items.push({ label: L("从焦点到这里的调用路径", "Call paths from the focus to here"), run: () => void showPath(focus, s) });
+    if (node.id !== state.focusNodeId) items.push({ label: L("从图中隐藏", "Hide from graph"), run: () => { state.hide(node.id); render(); } });
+    if (s.kind !== "external") items.push({ label: L("在编辑器中打开", "Open in editor"), run: () => openInEditor(s) });
   } else if (node.type === "ambiguous" && node.callers) {
-    items.push({ label: "全部加入图", run: () => expandCallersCapsule(node) });
-    items.push({ label: "选择要加入的调用者…", run: () => void expandCapsule(node) });
+    items.push({ label: L("全部加入图", "Add all to graph"), run: () => expandCallersCapsule(node) });
+    items.push({ label: L("选择要加入的调用者…", "Choose callers to add…"), run: () => void expandCapsule(node) });
   } else if (node.type === "ambiguous") {
-    items.push({ label: "选择要加入的目标…", run: () => void expandCapsule(node) });
-    items.push({ label: "从图中隐藏", run: () => { state.hide(node.id); render(); } });
+    items.push({ label: L("选择要加入的目标…", "Choose targets to add…"), run: () => void expandCapsule(node) });
+    items.push({ label: L("从图中隐藏", "Hide from graph"), run: () => { state.hide(node.id); render(); } });
   } else {
-    items.push({ label: "从图中隐藏", run: () => { state.hide(node.id); render(); } });
+    items.push({ label: L("从图中隐藏", "Hide from graph"), run: () => { state.hide(node.id); render(); } });
   }
   openMenu(items, x, y);
 }
@@ -729,7 +979,7 @@ searchEl.addEventListener("input", () => {
     lastHits = hits;
     activeIndex = -1;
     dropdown.innerHTML = lastHits.length === 0
-      ? '<div class="item"><span class="muted">没有匹配</span></div>'
+      ? `<div class="item"><span class="muted">${L("没有匹配", "No matches")}</span></div>`
       : lastHits.map((s, i) => `<div class="item" data-i="${i}"><span class="kind">${s.kind}</span><span class="qname" title="${esc(s.qualifiedName)}">${esc(s.qualifiedName)}</span><span class="path">${esc(s.path)}:${s.startLine}</span></div>`).join("");
     dropdown.querySelectorAll<HTMLElement>(".item[data-i]").forEach((el) => {
       el.onclick = () => pick(Number(el.dataset["i"]));
@@ -738,6 +988,7 @@ searchEl.addEventListener("input", () => {
   }, 300);
 });
 searchEl.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && pathPicker.armed) { pathPicker.cancel(); setPathPicking(false); dropdown.classList.remove("open"); return; }
   if (!dropdown.classList.contains("open")) return;
   if (e.key === "ArrowDown") { activeIndex = Math.min(activeIndex + 1, lastHits.length - 1); highlight(); e.preventDefault(); }
   if (e.key === "ArrowUp") { activeIndex = Math.max(activeIndex - 1, 0); highlight(); e.preventDefault(); }
@@ -752,6 +1003,14 @@ function pick(i: number): void {
   dropdown.classList.remove("open");
   if (!s) return;
   searchEl.value = "";
+  // 「路径到…」在等终点：选中的就是终点 B
+  if (pathPicker.armed && mode === "graph") {
+    const r = pathPicker.take(s);
+    if ("error" in r) { toast(r.error); return; }
+    setPathPicking(false);
+    void showPath(r.from, r.to);
+    return;
+  }
   // 在当前模式下打开：模块关系里以它为中心；调用图（以及项目地图，地图没有"符号焦点"）里聚焦它
   if (mode === "relations") { void openRelations(s.id, "push"); return; }
   void focusCall(s);
@@ -780,7 +1039,7 @@ function ensureRelRenderer(): RelationsRenderer {
   relRenderer ??= new RelationsRenderer($("rel-cy"), {
     onUnitSelect: showRelUnitDetails,
     onUnitDoubleClick: (n) => {
-      if (n.unit.id === relDto?.focus.id) { toast("已经是中心"); return; }
+      if (n.unit.id === relDto?.focus.id) { toast(L("已经是中心", "Already the center")); return; }
       void openRelations(n.unit, "push");
     },
     onUnitContext: showRelContextMenu,
@@ -805,12 +1064,12 @@ function enterRelations(sync: boolean): void {
 }
 
 /** 侧边栏 / 宿主消息 / 调用图右键：切到模块关系并以 symbolId 为中心。 */
-function showRelationsFor(symbolId: number, depth?: 1 | 2): void {
+function showRelationsFor(symbolId: number, depth?: 1 | 2): Promise<void> {
   if (depth === 1 || depth === 2) relDepth = depth;
   // 调用图当前的选中 / 焦点算"已经带过来了"，之后切标签不会把这里指定的中心覆盖掉
   relSyncedFromGraph = graphSymbolForRelations()?.id ?? relSyncedFromGraph;
   setMode("relations", false);
-  void openRelations(symbolId, "push");
+  return openRelations(symbolId, "push");
 }
 
 /**
@@ -834,12 +1093,12 @@ async function openRelations(target: number | SymbolDto, how: "push" | "replace"
       if (s && s.id !== target.id) dto = await a.relations(s.id, depth, tests);
     }
   } catch (e) {
-    if (seq === relSeq) toast(`取模块关系失败：${e}`, 5000);
+    if (seq === relSeq) toast(L(`取模块关系失败：${e}`, `Failed to load Module Relations: ${e}`), 5000);
     return;
   }
   if (seq !== relSeq) return;
   if (dto === null) {
-    toast("拿不到模块关系：服务版本太旧（没有 /api/symbols/{id}/relations，重启服务或更新扩展），或符号已不在索引里", 6000);
+    toast(L("拿不到模块关系：服务版本太旧（没有 /api/symbols/{id}/relations，重启服务或更新扩展），或符号已不在索引里", "Can't get Module Relations: the server is too old (no /api/symbols/{id}/relations; restart the server or update the extension), or the symbol is no longer in the index"), 6000);
     renderRelationsChrome();
     return;
   }
@@ -849,6 +1108,10 @@ async function openRelations(target: number | SymbolDto, how: "push" | "replace"
   if (how === "push") { relHistory.visit(dto.focus, label); recordRel(dto.focus); }
   else relHistory.replaceCurrent(dto.focus, label);
   relRenderer!.render(dto);
+  const relStale = $("rel-stale");
+  relStale.innerHTML = staleBarHtml(dto.staleFiles, esc);
+  relStale.style.display = relStale.innerHTML ? "" : "none";
+  wireStaleBar(relStale);
   renderRelationsChrome();
   showRelationsSummary();
 }
@@ -895,9 +1158,9 @@ function showRelationsSummary(): void {
   const units = d.nodes.length;
   const comps = new Set(d.nodes.map((n) => n.componentKey)).size;
   const reverse = d.edges.filter((e) => reverseNote(e, d) !== null).length;
-  const body = units <= 1 ? "没有找到与其他类的依赖" : `${units} 个单元，${comps} 个组件，${d.edges.length} 条依赖${reverse > 0 ? `，其中 ${reverse} 条反向（红色描边）` : ""}`;
+  const body = units <= 1 ? L("没有找到与其他类的依赖", "No dependencies on other classes found") : L(`${units} 个单元，${comps} 个组件，${d.edges.length} 条依赖${reverse > 0 ? `，其中 ${reverse} 条反向（红色描边）` : ""}`, `${units} units, ${comps} ${comps === 1 ? "component" : "components"}, ${d.edges.length} ${d.edges.length === 1 ? "dependency" : "dependencies"}${reverse > 0 ? `, ${reverse} reversed (red outline)` : ""}`);
   detailsEl.innerHTML = `<span class="kind">${esc(unitKindLabel(d.focus))}</span><span class="mono" title="${esc(d.focus.qualifiedName)}">${esc(unitLabel(d.focus))}</span><span>${esc(body)}</span>` +
-    `<span class="muted">组件按依赖序从左到右（被依赖的在左，外部最右）；单击边看示例，双击类换中心，右键更多</span>`;
+    `<span class="muted">${L("组件按依赖序从左到右（被依赖的在左，外部最右）；单击边看示例，双击类换中心，右键更多", "Components in dependency order left to right (dependencies on the left, external rightmost); click an edge for samples, double-click a class to re-center, right-click for more")}</span>`;
 }
 
 function showRelUnitDetails(n: RelationNodeDto): void {
@@ -906,16 +1169,16 @@ function showRelUnitDetails(n: RelationNodeDto): void {
   const u = n.unit;
   const canOpen = !n.external && u.kind !== "external";
   detailsEl.innerHTML = `<span class="kind">${esc(unitKindLabel(u))}</span><span class="mono" title="${esc(u.path)}:${u.startLine}">${esc(u.qualifiedName)}</span>` +
-    `<span class="muted">组件：${esc(relComponentLabel(n.componentKey))}${n.external ? " · 仓库外" : ""}</span>` +
+    `<span class="muted">${L("组件：", "Component: ")}${esc(relComponentLabel(n.componentKey))}${n.external ? L(" · 仓库外", " · outside repo") : ""}</span>` +
     `<span>${esc(relationToCenter(relDto, u.id))}</span>` +
-    (canOpen ? `<a id="rel-open">在编辑器中打开</a>` : "");
+    (canOpen ? `<a id="rel-open">${L("在编辑器中打开", "Open in editor")}</a>` : "");
   detailsEl.querySelector<HTMLAnchorElement>("#rel-open")?.addEventListener("click", () => openInEditor(u));
 }
 
 function showRelComponentDetails(c: RelationComponentDto): void {
   relSelectedEdge = null;
   const count = relDto?.nodes.filter((n) => n.componentKey === c.key).length ?? 0;
-  detailsEl.innerHTML = `<span class="kind">组件</span><span class="mono" title="${esc(c.key)}">${esc(c.label)}</span><span class="muted">依赖序 ${c.order}${c.containerKey ? ` · 容器 ${esc(c.containerKey)}` : ""} · 图里 ${count} 个单元</span>`;
+  detailsEl.innerHTML = `<span class="kind">${L("组件", "Component")}</span><span class="mono" title="${esc(c.key)}">${esc(c.label)}</span><span class="muted">${L(`依赖序 ${c.order}${c.containerKey ? ` · 容器 ${esc(c.containerKey)}` : ""} · 图里 ${count} 个单元`, `Dependency order ${c.order}${c.containerKey ? ` · container ${esc(c.containerKey)}` : ""} · ${count} ${count === 1 ? "unit" : "units"} in graph`)}</span>`;
 }
 
 let relSelectedEdge: RelationEdgeDto | null = null;
@@ -925,16 +1188,16 @@ function showRelEdgeDetails(e: RelationEdgeDto): void {
   relSelectedEdge = e;
   const rev = reverseNote(e, relDto);
   const samples = e.samples.map((x, i) =>
-    `<span class="rel-sample"><a data-sample="${i}" title="${esc(x.file)}:${x.line}">${esc(x.fromLabel)} → ${esc(x.toLabel)}</a><span class="muted">${esc(RelationKindLabels[x.kind] ?? x.kind)} · ${esc(fileName(x.file))}:${x.line}${x.confidence < 0.7 ? ` · 置信 ${x.confidence.toFixed(1)}` : ""}</span></span>`).join("");
-  detailsEl.innerHTML = `<span class="kind">依赖</span><span class="mono">${esc(relUnitName(e.from))} → ${esc(relUnitName(e.to))}</span><span>${esc(kindsSummary(e.kinds))}</span>` +
+    `<span class="rel-sample"><a data-sample="${i}" title="${esc(x.file)}:${x.line}">${esc(x.fromLabel)} → ${esc(x.toLabel)}</a><span class="muted">${esc(RelationKindLabels[x.kind] ?? x.kind)} · ${esc(fileName(x.file))}:${x.line}${x.confidence < 0.7 ? L(` · 置信 ${x.confidence.toFixed(1)}`, ` · confidence ${x.confidence.toFixed(1)}`) : ""}</span></span>`).join("");
+  detailsEl.innerHTML = `<span class="kind">${L("依赖", "Dependency")}</span><span class="mono">${esc(relUnitName(e.from))} → ${esc(relUnitName(e.to))}</span><span>${esc(kindsSummary(e.kinds))}</span>` +
     (rev ? `<span class="warn">${esc(rev)}</span>` : "") +
-    (samples ? `<span class="rel-samples"><span class="muted">示例：</span>${samples}</span>` : `<span class="muted">没有成员层面的示例</span>`);
+    (samples ? `<span class="rel-samples"><span class="muted">${L("示例：", "Samples: ")}</span>${samples}</span>` : `<span class="muted">${L("没有成员层面的示例", "No member-level samples")}</span>`);
 }
 
 /** 打开文件到行；pos（UTF-16 偏移）有值时宿主优先用它定位到调用名。 */
 function openLocation(path: string, line: number, col: number, pos: number | null): void {
   host.post({ type: "open", path, line, col, pos });
-  if (!host.isVsCode) toast(`（浏览器模式）打开 ${path}:${line}${pos !== null ? ` @${pos}` : ""}`);
+  if (!host.isVsCode) toast(L(`（浏览器模式）打开 ${path}:${line}${pos !== null ? ` @${pos}` : ""}`, `(Browser mode) Open ${path}:${line}${pos !== null ? ` @${pos}` : ""}`));
 }
 
 detailsEl.addEventListener("click", (ev) => {
@@ -947,9 +1210,9 @@ function showRelContextMenu(n: RelationNodeDto, x: number, y: number): void {
   const u = n.unit;
   const canOpen = !n.external && u.kind !== "external";
   const items: MenuItem[] = [
-    { label: "在编辑器中打开", run: canOpen ? () => openInEditor(u) : undefined },
-    { label: "在调用图中查看", run: canOpen ? () => void focusCall(u) : undefined },
-    { label: "设为中心", run: u.id !== relDto?.focus.id ? () => void openRelations(u, "push") : undefined },
+    { label: L("在编辑器中打开", "Open in editor"), run: canOpen ? () => openInEditor(u) : undefined },
+    { label: L("在调用图中查看", "Show in Call Graph"), run: canOpen ? () => void focusCall(u) : undefined },
+    { label: L("设为中心", "Set as center"), run: u.id !== relDto?.focus.id ? () => void openRelations(u, "push") : undefined },
   ];
   openMenu(items, x, y);
 }
@@ -971,7 +1234,7 @@ async function refreshRelations(): Promise<void> {
   const old = relHistory.current;
   if (!old) return;
   const s = await resolveRefreshedSymbol(api, old);
-  if (!s) { if (mode === "relations") toast("模块关系的中心在新索引里找不到了"); return; }
+  if (!s) { if (mode === "relations") toast(L("模块关系的中心在新索引里找不到了", "The Module Relations center is not in the new index")); return; }
   relHistory.replaceCurrent(s, unitLabel(s));
   relParams = "";
   if (mode === "relations") await openRelations(s, "replace");
@@ -1011,8 +1274,13 @@ const GraphOnlyControls = ["auto-chain", "chain-down", "branch-width", "show-typ
 function applyCallViewChrome(): void {
   const graph = mode === "graph";
   const seq = graph && callView.mode === "seq";
-  $("cy").style.display = graph && !seq ? "" : "none";
-  $("seq").style.display = seq ? "" : "none";
+  // 路径图画在时序区里（时序图渲染器），网状模式下看路径时也临时换成时序区
+  const path = graph && pathDto !== null;
+  $("cy").style.display = graph && !seq && !path ? "" : "none";
+  $("seq").style.display = seq || path ? "" : "none";
+  $("seq-diagram").style.display = path ? "none" : "";
+  $("path-diagram").style.display = path ? "" : "none";
+  $("path-to").style.display = graph ? "" : "none";
   $("call-view").style.display = graph ? "" : "none";
   $("call-view").querySelectorAll<HTMLButtonElement>("button[data-view]").forEach((b) => b.classList.toggle("active", b.dataset["view"] === callView.mode));
   for (const id of GraphOnlyControls) {
@@ -1021,7 +1289,7 @@ function applyCallViewChrome(): void {
   }
   // 「↑ 到源头」两种画法都留着：时序图只画往下的调用，在时序模式下点它 = 切到网状再往上追
   $("chain-up").style.display = graph ? "" : "none";
-  $("chain-up").title = seq ? "切到网状图，从焦点沿调用者向上追到源头（时序图只画往下的调用）" : "从焦点沿调用者向上追到源头";
+  $("chain-up").title = seq ? L("切到网状图，从焦点沿调用者向上追到源头（时序图只画往下的调用）", "Switch to Graph and trace callers up from the focus to the source (Sequence only draws downward calls)") : L("从焦点沿调用者向上追到源头", "Trace callers up from the focus to the source");
   const follow = document.getElementById("follow-cursor");
   if (follow) follow.closest("label")!.style.display = graph ? "" : "none";
   // 「测试代码」：网状图里过滤测试邻居，模块关系里是 tests=true/false；时序图不受它影响
@@ -1048,9 +1316,9 @@ async function loadMapView(): Promise<void> {
     const archAvailable = a !== null && a.nodes.length > 0;
     const hasContainers = a !== null && a.nodes.some((n) => n.kind === "container");
     $<HTMLButtonElement>("view-arch").disabled = !archAvailable;
-    $("view-arch").title = a === null ? "服务版本太旧，没有 /api/arch/containers；重启服务或更新扩展" : archAvailable ? "容器图：可部署单元、外部系统与它们之间的边" : (a.note ?? "没有发现可部署单元");
+    $("view-arch").title = a === null ? L("服务版本太旧，没有 /api/arch/containers；重启服务或更新扩展", "Server is too old (no /api/arch/containers); restart the server or update the extension") : archAvailable ? L("容器图：可部署单元、外部系统与它们之间的边", "Container diagram: deployable units, external systems, and the edges between them") : (a.note ?? L("没有发现可部署单元", "No deployable units found"));
     $<HTMLButtonElement>("view-framework").disabled = !hasContainers;
-    $("view-framework").title = hasContainers ? FrameworkTabTitle : a === null ? "服务版本太旧，没有容器图；重启服务或更新扩展" : "没有发现可部署的容器，框架流程无从谈起";
+    $("view-framework").title = hasContainers ? FrameworkTabTitle : a === null ? L("服务版本太旧，没有容器图；重启服务或更新扩展", "Server is too old (no container diagram); restart the server or update the extension") : L("没有发现可部署的容器，框架流程无从谈起", "No deployable containers found, so there is no Framework Flow");
     // 纯类库仓库（没有任何可部署容器）：直接看整库的模块依赖矩阵；DSM 没有组件（还没索引等）才退回命名空间视图
     if (autoFlowPending && shouldOpenRepoDsm(a) && hasDsmContent(await api.dsm(RepoDsmKey, ""))) {
       autoFlowPending = false;
@@ -1117,7 +1385,7 @@ $("map-layout").onchange = () => {
 
 /** 切预设：手动下拉和叙述卡的「按 AI 建议排版」都走这里。不认识的 id 忽略。 */
 function applyPreset(kind: NarrativeKind, id: string): void {
-  if (!LayoutPresets[kind].some((p) => p.id === id)) { toast(`不认识的版式 ${id}`); return; }
+  if (!LayoutPresets[kind].some((p) => p.id === id)) { toast(L(`不认识的版式 ${id}`, `Unknown layout ${id}`)); return; }
   const changed = presets[kind] !== id;
   presets[kind] = id;
   if (kind === "container") { if (archDto && archRenderer) archRenderer.render(archDto, id); }
@@ -1125,7 +1393,7 @@ function applyPreset(kind: NarrativeKind, id: string): void {
   else flowView?.setPreset(id);
   renderLayoutSelect();
   card?.refresh();
-  if (changed) toast(`版式：${presetLabel(kind, id)}`);
+  if (changed) toast(L(`版式：${presetLabel(kind, id)}`, `Layout: ${presetLabel(kind, id)}`));
 }
 
 // ---------- 叙述卡（M5d）----------
@@ -1145,7 +1413,7 @@ async function onEvidence(ref: EvidenceRef, raw: string): Promise<void> {
       if (archRenderer?.selectNode(ref.ref)) {
         const n = archDto?.nodes.find((x) => x.key === ref.ref);
         if (n) showArchNodeDetails(n, false);
-      } else toast(`容器图里没有 ${ref.ref}`);
+      } else toast(L(`容器图里没有 ${ref.ref}`, `${ref.ref} is not in the container diagram`));
       return;
     }
     case "edge": {
@@ -1155,7 +1423,7 @@ async function onEvidence(ref: EvidenceRef, raw: string): Promise<void> {
       if (archRenderer?.selectEdge(e.from, e.to, e.protocol)) {
         const edge = archDto?.edges.find((x) => x.from === e.from && x.to === e.to && (e.protocol === null || x.protocol === e.protocol));
         if (edge) showArchEdgeDetails(edge);
-      } else toast(`容器图里没有这条边：${e.from} → ${e.to}`);
+      } else toast(L(`容器图里没有这条边：${e.from} → ${e.to}`, `This edge is not in the container diagram: ${e.from} → ${e.to}`));
       return;
     }
     case "entry":
@@ -1167,13 +1435,13 @@ async function onEvidence(ref: EvidenceRef, raw: string): Promise<void> {
     }
     case "comp": {
       if (mapView === "dsm" && highlightDsm(ref.ref, null)) return;
-      toast(`组件 ${ref.ref}（在组件矩阵视图里可定位）`);
+      toast(L(`组件 ${ref.ref}（在组件矩阵视图里可定位）`, `Component ${ref.ref} (can be located in the Component Matrix view)`));
       return;
     }
     case "cell": {
       const arrow = ref.ref.indexOf("→");
       if (arrow > 0 && mapView === "dsm" && highlightDsm(ref.ref.slice(0, arrow), ref.ref.slice(arrow + 1))) return;
-      toast(`依赖格 ${ref.ref}（在组件矩阵视图里可定位）`);
+      toast(L(`依赖格 ${ref.ref}（在组件矩阵视图里可定位）`, `Dependency cell ${ref.ref} (can be located in the Component Matrix view)`));
       return;
     }
     default:
@@ -1231,7 +1499,7 @@ function openDsm(container: ArchNodeDto): void {
 /** 仓库目录名（整库 DSM 的标题）。 */
 function repoDisplayName(): string {
   const root = (currentRepo ?? "").replace(/[\\/]+$/, "");
-  return root.slice(Math.max(root.lastIndexOf("/"), root.lastIndexOf("\\")) + 1) || "仓库";
+  return root.slice(Math.max(root.lastIndexOf("/"), root.lastIndexOf("\\")) + 1) || L("仓库", "Repository");
 }
 
 async function loadDsm(): Promise<void> {
@@ -1242,13 +1510,13 @@ async function loadDsm(): Promise<void> {
   const root = dsmPath[dsmPath.length - 1] ?? "";
   const d = await a.dsm(container.key, root);
   if (seq !== dsmSeq || a !== api || container !== dsmContainer || root !== (dsmPath[dsmPath.length - 1] ?? "") || mapView !== "dsm") return;
-  if (d === null) { toast("服务没有 /api/arch/dsm，或容器已不存在"); setMapView("arch"); return; }
+  if (d === null) { toast(L("服务没有 /api/arch/dsm，或容器已不存在", "Server has no /api/arch/dsm, or the container no longer exists")); setMapView("arch"); return; }
   dsmDto = d;
   dsmView ??= new DsmView($("dsm-view"), {
     onCellSelect: showDsmCellDetails,
     onComponentSelect: showDsmComponentDetails,
     onComponentDoubleClick: (c) => {
-      if (!c.hasChildren) { toast(`${c.label} 下面没有更深的层级`); return; }
+      if (!c.hasChildren) { toast(L(`${c.label} 下面没有更深的层级`, `${c.label} has no deeper levels`)); return; }
       dsmPath.push(c.key);
       void loadDsm();
     },
@@ -1257,11 +1525,12 @@ async function loadDsm(): Promise<void> {
   dsmShown = reorderDsm(d, presets.component);
   dsmView.render(dsmShown);
   renderContainerCrumbs("dsm");
-  const cyc = d.cycles.length > 0 ? `，${d.cycles.length} 个环（红框）` : "，没有环";
-  const cpl = d.coupling.length > 0 ? `，${d.coupling.length} 对隐性耦合（虚框 ~）` : "";
-  const git = d.gitAvailable ? "" : "；没有 git 统计";
+  const pl = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  const cyc = d.cycles.length > 0 ? L(`，${d.cycles.length} 个环（红框）`, `, ${pl(d.cycles.length, "cycle", "cycles")} (red boxes)`) : L("，没有环", ", no cycles");
+  const cpl = d.coupling.length > 0 ? L(`，${d.coupling.length} 对隐性耦合（虚框 ~）`, `, ${pl(d.coupling.length, "hidden coupling pair", "hidden coupling pairs")} (dashed boxes ~)`) : "";
+  const git = d.gitAvailable ? "" : L("；没有 git 统计", "; no git stats");
   const hint = isRepoContainer(dsmContainer) ? `<span class="muted">${esc(NoServiceHint)}</span>` : "";
-  detailsEl.innerHTML = `${hint}<span class="kind">DSM</span><span>${esc(dsmContainer.name)}${root ? " › " + esc(root) : ""}：${d.components.length} 个组件，${d.cells.length} 个依赖格${cyc}${cpl}${git}${d.note ? "；" + esc(d.note) : ""}</span><span class="muted">行依赖列；双击带下划线的行头钻入</span>`;
+  detailsEl.innerHTML = `${hint}<span class="kind">DSM</span><span>${esc(dsmContainer.name)}${root ? " › " + esc(root) : ""}${L(`：${d.components.length} 个组件，${d.cells.length} 个依赖格`, `: ${pl(d.components.length, "component", "components")}, ${pl(d.cells.length, "dependency cell", "dependency cells")}`)}${cyc}${cpl}${git}${d.note ? L("；", "; ") + esc(d.note) : ""}</span><span class="muted">${L("行依赖列；双击带下划线的行头钻入", "Rows depend on columns; double-click an underlined row header to drill in")}</span>`;
 }
 
 /**
@@ -1282,8 +1551,8 @@ function renderContainerCrumbs(sub: "dsm" | "flow" | "framework"): void {
   };
   const repo = isRepoContainer(dsmContainer);
   // 整库伪容器：没有容器图可回、也没有入口流程
-  if (!repo) add("项目", false, () => setMapView("arch"));
-  add(dsmContainer?.name ?? "容器", sub === "dsm" && dsmPath.length === 0, () => { if (dsmContainer) openDsm(dsmContainer); });
+  if (!repo) add(L("项目", "Project"), false, () => setMapView("arch"));
+  add(dsmContainer?.name ?? L("容器", "Container"), sub === "dsm" && dsmPath.length === 0, () => { if (dsmContainer) openDsm(dsmContainer); });
   const tabs = document.createElement("span");
   tabs.className = "subtabs";
   const tab = (label: string, title: string, active: boolean, onClick: () => void) => {
@@ -1294,13 +1563,13 @@ function renderContainerCrumbs(sub: "dsm" | "flow" | "framework"): void {
     b.onclick = onClick;
     tabs.appendChild(b);
   };
-  tab("组件矩阵", "组件依赖矩阵（DSM）：行依赖列，带环与 git 耦合", sub === "dsm", () => { if (dsmContainer && mapView !== "dsm") openDsm(dsmContainer); });
-  if (!repo) tab("入口流程", sub === "flow" && flowEntry ? "回到入口清单" : "从一个入口（路由 / 任务 / Handler）出发的调用时序", sub === "flow", () => {
+  tab(L("组件矩阵", "Component Matrix"), L("组件依赖矩阵（DSM）：行依赖列，带环与 git 耦合", "Component dependency matrix (DSM): rows depend on columns, with cycles and git coupling"), sub === "dsm", () => { if (dsmContainer && mapView !== "dsm") openDsm(dsmContainer); });
+  if (!repo) tab(L("入口流程", "Entry Flow"), sub === "flow" && flowEntry ? L("回到入口清单", "Back to entry list") : L("从一个入口（路由 / 任务 / Handler）出发的调用时序", "Call sequence starting from an entry (route / job / Handler)"), sub === "flow", () => {
     if (!dsmContainer) return;
     if (mapView !== "flow") openFlow(dsmContainer);
     else if (flowEntry) backToEntryList();
   });
-  if (!repo) tab("框架流程", FrameworkTabTitle, sub === "framework", () => { if (dsmContainer && mapView !== "framework") openFramework(dsmContainer); });
+  if (!repo) tab(L("框架流程", "Framework Flow"), FrameworkTabTitle, sub === "framework", () => { if (dsmContainer && mapView !== "framework") openFramework(dsmContainer); });
   crumbs.appendChild(tabs);
   if (sub === "dsm") {
     dsmPath.forEach((key, i) => add(key.slice(Math.max(key.lastIndexOf("."), key.lastIndexOf("/")) + 1), i === dsmPath.length - 1, () => { dsmPath = dsmPath.slice(0, i + 1); void loadDsm(); }));
@@ -1340,7 +1609,7 @@ async function autoSelectEntry(): Promise<void> {
   const a = api;
   const container = flowContainerKey;
   const stale = () => seq !== autoPickSeq || flowEntry !== null || flowContainerKey !== container || mapView !== "flow";
-  flowView?.clearFlow("正在挑一个入口…");
+  flowView?.clearFlow(L("正在挑一个入口…", "Picking an entry…"));
   const pick = await pickDefaultEntry(flowEntries, (e) => a.flow(e.symbolId, undefined, e), MaxDefaultEntryTries, stale);
   if (stale()) return;
   if (!pick) { flowView?.clearFlow(); return; }
@@ -1364,8 +1633,8 @@ async function loadFlowEntries(autoPick = false): Promise<void> {
   if (autoPick && !flowEntry && flowEntries.length > 0) { await autoSelectEntry(); return; }
   const counts = new Map<string, number>();
   for (const e of flowEntries) counts.set(e.kind, (counts.get(e.kind) ?? 0) + 1);
-  const parts = [...counts.entries()].map(([k, n]) => `${EntryKindLabels[k] ?? k} ${n}`).join("，");
-  detailsEl.innerHTML = `<span class="kind">入口</span><span>${esc(dsmContainer.name)}：${flowEntries.length} 个入口${parts ? "（" + esc(parts) + "）" : ""}</span><span class="muted">${flowEntries.length ? "点一个入口看时序；点行展开 / 折叠，点名字切到调用图" : "没有发现入口，或服务没有 /api/arch/entries"}</span>`;
+  const parts = [...counts.entries()].map(([k, n]) => `${EntryKindLabels[k] ?? k} ${n}`).join(L("，", ", "));
+  detailsEl.innerHTML = `<span class="kind">${L("入口", "Entries")}</span><span>${esc(dsmContainer.name)}${L(`：${flowEntries.length} 个入口${parts ? "（" + esc(parts) + "）" : ""}`, `: ${flowEntries.length} ${flowEntries.length === 1 ? "entry" : "entries"}${parts ? " (" + esc(parts) + ")" : ""}`)}</span><span class="muted">${flowEntries.length ? L("点一个入口看时序；点行展开 / 折叠，点名字切到调用图", "Click an entry to see its sequence; click a row to expand / collapse, click a name to switch to the Call Graph") : L("没有发现入口，或服务没有 /api/arch/entries", "No entries found, or the server has no /api/arch/entries")}</span>`;
 }
 
 /** 选中一个入口并画它的时序图；preloaded 是自动挑选时已经拿到的流程，省一次请求。 */
@@ -1375,13 +1644,13 @@ async function selectFlowEntry(e: EntryDto, preloaded: FlowDto | null = null): P
   flowDto = null;
   recordMap();
   flowView?.renderEntries(flowEntries, e);
-  if (!preloaded) flowView?.clearFlow("正在加载…");
+  if (!preloaded) flowView?.clearFlow(L("正在加载…", "Loading…"));
   renderContainerCrumbs("flow");
   // 流程叙述的 key 是入口 symbolId 的十进制字符串
   card?.show("flow", String(e.symbolId), entryTitle(e));
   const f = preloaded ?? await api.flow(e.symbolId, undefined, e);
   if (flowEntry !== e) return; // 等待期间用户又点了别的
-  if (f === null) { toast("服务没有 /api/arch/flow，或入口已不在索引里"); flowView?.clearFlow("拿不到这个入口的流程"); return; }
+  if (f === null) { toast(L("服务没有 /api/arch/flow，或入口已不在索引里", "Server has no /api/arch/flow, or the entry is no longer in the index")); flowView?.clearFlow(L("拿不到这个入口的流程", "Can't get the flow for this entry")); return; }
   flowDto = f;
   flowView?.renderFlow(f);
   showFlowEntryDetails(e, f);
@@ -1390,11 +1659,11 @@ async function selectFlowEntry(e: EntryDto, preloaded: FlowDto | null = null): P
 function showFlowEntryDetails(e: EntryDto, f: FlowDto | null): void {
   const kind = EntryKindLabels[e.kind] ?? e.kind;
   const where = `${e.file}:${e.line}`;
-  const stats = f ? `<span class="muted">${f.actors.length} 个参与者 · ${f.nodes} 个节点${f.truncated ? " · 已截断" : ""}</span>` : "";
-  detailsEl.innerHTML = `<span class="kind">${esc(kind)}</span><span class="mono" title="${esc(e.qualifiedName)}">${esc(entryTitle(e))}</span><span class="muted">${esc(where)}</span><a id="open-link">在编辑器中打开</a>${stats}`;
+  const stats = f ? `<span class="muted">${L(`${f.actors.length} 个参与者 · ${f.nodes} 个节点${f.truncated ? " · 已截断" : ""}`, `${f.actors.length} ${f.actors.length === 1 ? "participant" : "participants"} · ${f.nodes} ${f.nodes === 1 ? "node" : "nodes"}${f.truncated ? " · truncated" : ""}`)}</span>` : "";
+  detailsEl.innerHTML = `<span class="kind">${esc(kind)}</span><span class="mono" title="${esc(e.qualifiedName)}">${esc(entryTitle(e))}</span><span class="muted">${esc(where)}</span><a id="open-link">${L("在编辑器中打开", "Open in editor")}</a>${stats}`;
   detailsEl.querySelector<HTMLAnchorElement>("#open-link")?.addEventListener("click", () => {
     host.post({ type: "open", path: e.file, line: e.line, col: 1 });
-    if (!host.isVsCode) toast(`（浏览器模式）打开 ${where}`);
+    if (!host.isVsCode) toast(L(`（浏览器模式）打开 ${where}`, `(Browser mode) Open ${where}`));
   });
 }
 
@@ -1405,17 +1674,17 @@ function showFlowNodeDetails(node: FlowNodeDto): void {
 function showDsmComponentDetails(c: DsmComponentDto): void {
   // 组件叙述的 key = <容器键>|<组件键>，钻入后的命名空间层也一样
   if (dsmContainer) card?.show("component", `${dsmContainer.key}|${c.key}`, c.label);
-  const hot = c.hot ? `<span class="muted">git：${hotRevisionsText(c.hot)}，+${c.hot.added}/−${c.hot.deleted} 行，最近 ${c.hot.lastCommit}（${c.hot.ageMonths} 个月前）</span>` : "";
+  const hot = c.hot ? `<span class="muted">${L(`git：${hotRevisionsText(c.hot)}，+${c.hot.added}/−${c.hot.deleted} 行，最近 ${c.hot.lastCommit}（${c.hot.ageMonths} 个月前）`, `git: ${hotRevisionsText(c.hot)}, +${c.hot.added}/−${c.hot.deleted} lines, last ${c.hot.lastCommit} (${c.hot.ageMonths} ${c.hot.ageMonths === 1 ? "month" : "months"} ago)`)}</span>` : "";
   const cycle = dsmDto?.cycles.find((cy) => cy.includes(c.key));
-  const cyc = cycle ? `<span class="warn">环：${esc(cycle.map((k) => k.slice(Math.max(k.lastIndexOf("."), k.lastIndexOf("/")) + 1)).join(" ↔ "))}</span>` : "";
-  detailsEl.innerHTML = `<span class="kind">组件</span><span class="mono">${esc(c.key)}</span><span class="muted">${c.symbols} 个符号 · ${c.files} 个文件${c.hasChildren ? " · 可钻入" : ""}</span>${hot}${cyc}`;
+  const cyc = cycle ? `<span class="warn">${L("环：", "Cycle: ")}${esc(cycle.map((k) => k.slice(Math.max(k.lastIndexOf("."), k.lastIndexOf("/")) + 1)).join(" ↔ "))}</span>` : "";
+  detailsEl.innerHTML = `<span class="kind">${L("组件", "Component")}</span><span class="mono">${esc(c.key)}</span><span class="muted">${L(`${c.symbols} 个符号 · ${c.files} 个文件${c.hasChildren ? " · 可钻入" : ""}`, `${c.symbols} ${c.symbols === 1 ? "symbol" : "symbols"} · ${c.files} ${c.files === 1 ? "file" : "files"}${c.hasChildren ? " · drillable" : ""}`)}</span>${hot}${cyc}`;
 }
 
 function showDsmCellDetails(cell: DsmCellModel, from: DsmComponentDto, to: DsmComponentDto): void {
-  const kinds = cell.cell ? Object.entries(cell.cell.kinds).map(([k, n]) => `${k} ${n}`).join("，") : "没有静态依赖";
-  const coupled = cell.coupled ? `<span class="warn">常一起改：共同修订 ${cell.coupled.shared} 次，耦合度 ${Math.round(cell.coupled.degree * 100)}%${cell.cell ? "" : "，却没有静态边"}</span>` : "";
-  const cyc = cell.cycle ? `<span class="warn">环依赖</span>` : "";
-  detailsEl.innerHTML = `<span class="kind">依赖</span><span class="mono">${esc(from.label)} → ${esc(to.label)}</span><span class="muted">${esc(kinds)}</span>${coupled}${cyc}`;
+  const kinds = cell.cell ? Object.entries(cell.cell.kinds).map(([k, n]) => `${k} ${n}`).join(L("，", ", ")) : L("没有静态依赖", "No static dependencies");
+  const coupled = cell.coupled ? `<span class="warn">${L(`常一起改：共同修订 ${cell.coupled.shared} 次，耦合度 ${Math.round(cell.coupled.degree * 100)}%${cell.cell ? "" : "，却没有静态边"}`, `Often changed together: ${cell.coupled.shared} shared ${cell.coupled.shared === 1 ? "revision" : "revisions"}, coupling ${Math.round(cell.coupled.degree * 100)}%${cell.cell ? "" : ", yet no static edge"}`)}</span>` : "";
+  const cyc = cell.cycle ? `<span class="warn">${L("环依赖", "Cyclic dependency")}</span>` : "";
+  detailsEl.innerHTML = `<span class="kind">${L("依赖", "Dependency")}</span><span class="mono">${esc(from.label)} → ${esc(to.label)}</span><span class="muted">${esc(kinds)}</span>${coupled}${cyc}`;
 }
 
 // ---------- 容器图（L1）----------
@@ -1424,7 +1693,7 @@ async function loadArch(): Promise<void> {
   if (!api) return;
   const a = await api.arch();
   archDto = a;
-  if (a === null) { toast("服务没有 /api/arch/containers，切回命名空间视图"); setMapView("ns"); return; }
+  if (a === null) { toast(L("服务没有 /api/arch/containers，切回命名空间视图", "Server has no /api/arch/containers; switching back to the namespace view")); setMapView("ns"); return; }
   showArch(a);
 }
 
@@ -1436,19 +1705,23 @@ function showArch(a: ArchDto): void {
   });
   archRenderer.render(a, presets.container);
   const crumbs = $("map-crumb-list");
-  crumbs.innerHTML = '<span class="crumb current">项目</span>';
+  crumbs.innerHTML = `<span class="crumb current">${L("项目", "Project")}</span>`;
   const containers = a.nodes.filter((n) => n.kind === "container").length;
   const externals = a.nodes.filter((n) => n.kind === "external").length;
   const firm = a.edges.filter((e) => e.confidence >= 0.7).length;
-  const parts = [`${containers} 个容器`, `${externals} 个外部系统`, `${a.edges.length} 条边（其中 ${firm} 条按配置或路由对上）`];
-  if (a.conflicts.length > 0) parts.push(`声明与发现冲突 ${a.conflicts.length} 处`);
-  detailsEl.innerHTML = `<span class="kind">容器图</span><span>${esc(parts.join("，"))}</span><span class="muted">双击容器钻入；点边看证据</span>`;
+  const parts = [
+    L(`${containers} 个容器`, `${containers} ${containers === 1 ? "container" : "containers"}`),
+    L(`${externals} 个外部系统`, `${externals} external ${externals === 1 ? "system" : "systems"}`),
+    L(`${a.edges.length} 条边（其中 ${firm} 条按配置或路由对上）`, `${a.edges.length} ${a.edges.length === 1 ? "edge" : "edges"} (${firm} matched by config or route)`),
+  ];
+  if (a.conflicts.length > 0) parts.push(L(`声明与发现冲突 ${a.conflicts.length} 处`, `${a.conflicts.length} declared-vs-discovered ${a.conflicts.length === 1 ? "conflict" : "conflicts"}`));
+  detailsEl.innerHTML = `<span class="kind">${L("容器图", "Containers")}</span><span>${esc(parts.join(L("，", ", ")))}</span><span class="muted">${L("双击容器钻入；点边看证据", "Double-click a container to drill in; click an edge for evidence")}</span>`;
 }
 
 function evidenceLinks(list: EvidenceDto[], max = 6): string {
   const items = list.slice(0, max).map((e) => `<span class="mono" title="${esc(e.note ?? "")}">${esc(e.file)}${e.line !== null ? ":" + e.line : ""}</span>`);
-  if (list.length > max) items.push(`<span class="muted">…还有 ${list.length - max} 处</span>`);
-  return items.join("，");
+  if (list.length > max) items.push(`<span class="muted">${L(`…还有 ${list.length - max} 处`, `…${list.length - max} more`)}</span>`);
+  return items.join(L("，", ", "));
 }
 
 /** 单击容器：详情条照旧 + 叙述卡切到该容器（只 GET，不自动排队）。updateCard=false 用于证据定位，不动叙述卡。 */
@@ -1456,21 +1729,21 @@ function showArchNodeDetails(n: ArchNodeDto | null, updateCard = true): void {
   if (!n) return;
   if (updateCard) {
     if (n.kind === "container") showContainerCard(n);
-    else card?.clear("外部系统 / 使用者没有叙述；单击一个容器看它的。");
+    else card?.clear(L("外部系统 / 使用者没有叙述；单击一个容器看它的。", "External systems / users have no narration; click a container to see its narration."));
   }
   const sub = SubKindLabels[n.subKind] ?? n.subKind;
   const extra = n.kind === "container"
-    ? `<span class="muted">成员 ${n.members.length} 个项目${n.ports.length ? " · 端口 " + n.ports.join("/") : ""}${n.outbound ? " · " + n.outbound + " 处出口" : ""}</span>`
-    : `<span class="muted">${n.source === "declared" ? "来自 architecture.yaml 声明" : "静态发现"}</span>`;
-  detailsEl.innerHTML = `<span class="kind">${esc(sub)}</span><span class="mono">${esc(n.name)}</span>${extra}<span>证据：${evidenceLinks(n.evidence)}</span>`;
+    ? `<span class="muted">${L(`成员 ${n.members.length} 个项目${n.ports.length ? " · 端口 " + n.ports.join("/") : ""}${n.outbound ? " · " + n.outbound + " 处出口" : ""}`, `${n.members.length} member ${n.members.length === 1 ? "project" : "projects"}${n.ports.length ? " · ports " + n.ports.join("/") : ""}${n.outbound ? " · " + n.outbound + " outbound" : ""}`)}</span>`
+    : `<span class="muted">${n.source === "declared" ? L("来自 architecture.yaml 声明", "Declared in architecture.yaml") : L("静态发现", "Discovered statically")}</span>`;
+  detailsEl.innerHTML = `<span class="kind">${esc(sub)}</span><span class="mono">${esc(n.name)}</span>${extra}<span>${L("证据：", "Evidence: ")}${evidenceLinks(n.evidence)}</span>`;
 }
 
 function showArchEdgeDetails(e: ArchEdgeDto | null): void {
   if (!e || !archDto) return;
   const name = (k: string) => archDto!.nodes.find((n) => n.key === k)?.name ?? k;
-  const tier = e.source === "declared" ? "声明（1.0）" : e.confidence >= 0.9 ? "按路由对上（0.9）" : e.confidence >= 0.7 ? "按配置地址对上（0.7）" : "只知道客户端（0.5）";
-  const addr = [e.configKey ? `配置 ${e.configKey}` : "", e.url ?? ""].filter(Boolean).join(" → ");
-  detailsEl.innerHTML = `<span class="kind">${esc(e.protocol)}</span><span class="mono">${esc(name(e.from))} → ${esc(name(e.to))}</span><span class="muted">${esc(tier)}${addr ? " · " + esc(addr) : ""}</span><span>证据：${evidenceLinks(e.evidence)}</span>`;
+  const tier = e.source === "declared" ? L("声明（1.0）", "declared (1.0)") : e.confidence >= 0.9 ? L("按路由对上（0.9）", "matched by route (0.9)") : e.confidence >= 0.7 ? L("按配置地址对上（0.7）", "matched by config address (0.7)") : L("只知道客户端（0.5）", "client only (0.5)");
+  const addr = [e.configKey ? L(`配置 ${e.configKey}`, `config ${e.configKey}`) : "", e.url ?? ""].filter(Boolean).join(" → ");
+  detailsEl.innerHTML = `<span class="kind">${esc(e.protocol)}</span><span class="mono">${esc(name(e.from))} → ${esc(name(e.to))}</span><span class="muted">${esc(tier)}${addr ? " · " + esc(addr) : ""}</span><span>${L("证据：", "Evidence: ")}${evidenceLinks(e.evidence)}</span>`;
 }
 
 // 没有容器的仓库：「容器」按钮回到整库 DSM
@@ -1510,11 +1783,11 @@ async function loadNamespaceMap(): Promise<void> {
   // 面包屑回到"项目"时，有容器图就回容器图，而不是整库的命名空间顶层
   renderMapCrumbs(mapState, () => { if (mapState.root === "" && archDto && archDto.nodes.length > 0) setMapView("arch"); else void loadNamespaceMap(); });
   const total = map.groups.reduce((n, g) => n + g.symbols, 0);
-  detailsEl.innerHTML = `<span class="kind">地图</span><span>${esc(mapState.root || "整个项目")}：${map.groups.length} 个${map.groups.some((g) => g.symbolId !== null) ? "节点" : "模块"}，${total} 个符号，${map.edges.length} 条依赖</span><span class="muted">双击模块钻入，双击类型切到调用图</span>`;
+  detailsEl.innerHTML = `<span class="kind">${L("地图", "Map")}</span><span>${L(`${esc(mapState.root || "整个项目")}：${map.groups.length} 个${map.groups.some((g) => g.symbolId !== null) ? "节点" : "模块"}，${total} 个符号，${map.edges.length} 条依赖`, `${esc(mapState.root || "Whole project")}: ${map.groups.length} ${map.groups.some((g) => g.symbolId !== null) ? (map.groups.length === 1 ? "node" : "nodes") : (map.groups.length === 1 ? "module" : "modules")}, ${total} ${total === 1 ? "symbol" : "symbols"}, ${map.edges.length} ${map.edges.length === 1 ? "dependency" : "dependencies"}`)}</span><span class="muted">${L("双击模块钻入，双击类型切到调用图", "Double-click a module to drill in, double-click a type to switch to the Call Graph")}</span>`;
 }
 
 function focusSymbolById(id: number): Promise<void> {
-  return api!.symbol(id).then((s) => { if (s) void focusCall(s); else toast("符号在索引里找不到了"); });
+  return api!.symbol(id).then((s) => { if (s) void focusCall(s); else toast(L("符号在索引里找不到了", "Symbol not found in the index")); });
 }
 
 // ---------- 框架流程 ----------
@@ -1547,7 +1820,7 @@ async function openFrameworkDefault(): Promise<void> {
   const nodes = archDto?.nodes ?? [];
   const known = recent !== null && nodes.some((n) => n.kind === "container" && n.key === recent);
   const c = pickFrameworkContainer(nodes, recent, known ? null : await loadHttpCounts());
-  if (!c) { toast("没有发现可部署的容器，框架流程无从谈起"); return; }
+  if (!c) { toast(L("没有发现可部署的容器，框架流程无从谈起", "No deployable containers found, so there is no Framework Flow")); return; }
   openFramework(c);
 }
 
@@ -1572,24 +1845,24 @@ async function loadFramework(): Promise<void> {
     onNodeSelect: (node) => showSeqNodeDetails(node, focusInCallSeq, frameworkNodeKind(node)),
     onNodeFocus: focusInCallSeq,
     onOpenEntry: (e) => void openEntryFlow(fwContainer?.key ?? "", e),
-    onOpenHandler: (h) => { toast(`没有找到分派到 ${h.messageType ?? h.handler.name} 的入口，改在调用图里看这个 Handler`, 4000); void focusInCallSeqSymbol(h.handler.id); },
+    onOpenHandler: (h) => { toast(L(`没有找到分派到 ${h.messageType ?? h.handler.name} 的入口，改在调用图里看这个 Handler`, `No entry dispatching to ${h.messageType ?? h.handler.name} found; showing this Handler in the Call Graph instead`), 4000); void focusInCallSeqSymbol(h.handler.id); },
     loadEntries: (key) => (api ? api.entries(key) : Promise.resolve([])),
   });
   dsmContainer = c;
   renderContainerCrumbs("framework");
-  if (fwView.current?.containerKey !== c.key) fwView.clear(`正在取 ${c.name} 的框架流程…`);
+  if (fwView.current?.containerKey !== c.key) fwView.clear(L(`正在取 ${c.name} 的框架流程…`, `Loading Framework Flow of ${c.name}…`));
   let d: FrameworkFlowDto | null;
   try {
     d = await api.framework(c.key);
   } catch (e) {
-    if (seq === fwSeq) { fwDto = null; fwView.unavailable(`取框架流程失败：${e}`, containerNodes(), c.key, c.name); detailsEl.innerHTML = `<span class="kind">框架流程</span><span class="warn">${esc(String(e))}</span>`; }
+    if (seq === fwSeq) { fwDto = null; fwView.unavailable(L(`取框架流程失败：${e}`, `Failed to load Framework Flow: ${e}`), containerNodes(), c.key, c.name); detailsEl.innerHTML = `<span class="kind">${L("框架流程", "Framework Flow")}</span><span class="warn">${esc(String(e))}</span>`; }
     return;
   }
   if (seq !== fwSeq || mapView !== "framework") return;
   if (d === null) {
     fwDto = null;
-    fwView.unavailable(`拿不到 ${c.name} 的框架流程：服务版本太旧（没有 /api/arch/framework，重启服务或更新扩展），或容器已不在索引里。可以在上面换一个容器。`, containerNodes(), c.key, c.name);
-    detailsEl.innerHTML = `<span class="kind">框架流程</span><span class="muted">服务没有 /api/arch/framework，或容器已不在索引里</span>`;
+    fwView.unavailable(L(`拿不到 ${c.name} 的框架流程：服务版本太旧（没有 /api/arch/framework，重启服务或更新扩展），或容器已不在索引里。可以在上面换一个容器。`, `Can't get the Framework Flow of ${c.name}: the server is too old (no /api/arch/framework; restart the server or update the extension), or the container is no longer in the index. You can pick another container above.`), containerNodes(), c.key, c.name);
+    detailsEl.innerHTML = `<span class="kind">${L("框架流程", "Framework Flow")}</span><span class="muted">${L("服务没有 /api/arch/framework，或容器已不在索引里", "Server has no /api/arch/framework, or the container is no longer in the index")}</span>`;
     return;
   }
   // 没变就不重画（索引刷新、切回来），免得把展开 / 清单的状态冲掉
@@ -1600,7 +1873,7 @@ async function loadFramework(): Promise<void> {
 }
 
 function showFrameworkSummary(d: FrameworkFlowDto): void {
-  detailsEl.innerHTML = `<span class="kind">框架流程</span><span>${esc(d.containerName)}：${esc(frameworkSummary(d.stages, d.handlers))}</span><span class="muted">点「N 个 Handler ▸」看清单；单击行看详情，双击在调用图里以它为焦点</span>`;
+  detailsEl.innerHTML = `<span class="kind">${L("框架流程", "Framework Flow")}</span><span>${esc(d.containerName)}${L("：", ": ")}${esc(frameworkSummary(d.stages, d.handlers))}</span><span class="muted">${L("点「N 个 Handler ▸」看清单；单击行看详情，双击在调用图里以它为焦点", "Click \"N Handlers ▸\" for the list; click a row for details, double-click to focus it in the Call Graph")}</span>`;
 }
 
 /** 框架流程里一行在详情条上的种类：它所在阶段的名字。 */
@@ -1618,7 +1891,7 @@ function focusInCallSeq(node: FlowNodeDto): void {
 async function focusInCallSeqSymbol(id: number): Promise<void> {
   if (!api) return;
   const s = await api.symbol(id);
-  if (!s) { toast("符号在索引里找不到了"); return; }
+  if (!s) { toast(L("符号在索引里找不到了", "Symbol not found in the index")); return; }
   if (mode !== "graph") setMode("graph");
   if (callView.mode !== "seq") await callView.setMode("seq", false);
   await callView.focus(s);
@@ -1645,7 +1918,7 @@ async function gotoFramework(dto: FlowDto): Promise<void> {
   if (!api) return;
   if (!archDto) archDto = await api.arch();
   const c = frameworkJumpTarget(dto, archDto?.nodes ?? []);
-  if (!c) toast(`容器图里找不到容器 ${dto.containerKey}，改看默认容器`);
+  if (!c) toast(L(`容器图里找不到容器 ${dto.containerKey}，改看默认容器`, `Container ${dto.containerKey} not found in the container diagram; showing the default container`));
   autoFlowPending = false;
   if (c) fwContainer = c;
   if (mode !== "map") {
@@ -1665,14 +1938,14 @@ $("view-ns").onclick = () => { saveMapViewChoice(() => window.localStorage, "ns"
 
 function showMapGroupDetails(g: MapGroupDto | null): void {
   if (!g) return;
-  detailsEl.innerHTML = `<span class="kind">${g.symbolId !== null ? "类型" : "模块"}</span><span class="mono">${esc(g.key)}</span>` +
-    `<span class="muted">${g.symbols} 个符号 · ${g.files} 个文件${g.hasChildren ? " · 可钻入" : ""}</span>`;
+  detailsEl.innerHTML = `<span class="kind">${g.symbolId !== null ? L("类型", "Type") : L("模块", "Module")}</span><span class="mono">${esc(g.key)}</span>` +
+    `<span class="muted">${L(`${g.symbols} 个符号 · ${g.files} 个文件${g.hasChildren ? " · 可钻入" : ""}`, `${g.symbols} ${g.symbols === 1 ? "symbol" : "symbols"} · ${g.files} ${g.files === 1 ? "file" : "files"}${g.hasChildren ? " · drillable" : ""}`)}</span>`;
 }
 
 function showMapEdgeDetails(e: MapEdgeDto | null): void {
   if (!e) return;
-  const kinds = Object.entries(e.kinds).map(([k, n]) => `${k} ${n}`).join("，");
-  detailsEl.innerHTML = `<span class="kind">依赖</span><span class="mono">${esc(e.from)} → ${esc(e.to)}</span><span class="muted">${e.weight} 条：${esc(kinds)}</span>`;
+  const kinds = Object.entries(e.kinds).map(([k, n]) => `${k} ${n}`).join(L("，", ", "));
+  detailsEl.innerHTML = `<span class="kind">${L("依赖", "Dependency")}</span><span class="mono">${esc(e.from)} → ${esc(e.to)}</span><span class="muted">${L(`${e.weight} 条：`, `${e.weight}: `)}${esc(kinds)}</span>`;
 }
 
 $("mode-graph").onclick = () => setMode("graph");
@@ -1688,6 +1961,9 @@ window.addEventListener("mouseup", (e) => {
   if (e.button === 3) { e.preventDefault(); navBack(); }
   else if (e.button === 4) { e.preventDefault(); navForward(); }
 });
+$("path-to").onclick = togglePathPicker;
+$("nav-share").onclick = shareTrail;
+$("export-img").onclick = openExportMenu;
 $("mode-rel").onclick = () => { if (mode !== "relations") setMode("relations"); };
 $("mode-map").onclick = () => setMode("map");
 
@@ -1700,14 +1976,14 @@ async function checkHealth(): Promise<void> {
   try {
     const h = await api.health();
     if (h.files === 0) {
-      showOverlay("这个仓库还没有索引", `${h.repo}`, true);
+      showOverlay(L("这个仓库还没有索引", "This repository has no index yet"), `${h.repo}`, true);
     } else {
       overlay.classList.remove("open");
     }
     const st = await api.status();
     if (st.running) pollStatus();
   } catch (e) {
-    showOverlay("连不上 CodeTrail Graph 服务", String(e), false);
+    showOverlay(L("连不上 CodeTrail Graph 服务", "Can't connect to the CodeTrail Graph server"), String(e), false);
   }
 }
 function showOverlay(title: string, text: string, showIndexButton: boolean): void {
@@ -1721,7 +1997,7 @@ async function startIndex(full: boolean): Promise<void> {
   if (!api) return;
   // VS Code 里由扩展发起（它要更新状态栏）；浏览器调试模式下页面自己调服务
   if (host.isVsCode) host.post({ type: "requestIndex", full });
-  else if ((await api.startIndex(full)) === "busy") toast("索引正在进行中");
+  else if ((await api.startIndex(full)) === "busy") toast(L("索引正在进行中", "Indexing is already in progress"));
   sawRunning = true;
   pollStatus();
 }
@@ -1732,7 +2008,7 @@ function pollStatus(): void {
     const s = await api.status();
     if (s.running) {
       sawRunning = true;
-      $("ov-title").textContent = "正在建立索引";
+      $("ov-title").textContent = L("正在建立索引", "Building index");
       $("ov-text").textContent = `${s.phase ?? ""} ${s.done}/${s.total}`;
       $("progress").style.display = "block";
       ($("progress").firstElementChild as HTMLElement).style.width = s.total ? `${Math.round((s.done / s.total) * 100)}%` : "10%";
@@ -1743,8 +2019,8 @@ function pollStatus(): void {
       // 只有真正看到过一次"进行中"才算一次索引结束，避免 init 时误关覆盖层、误弹"完成"
       sawRunning = false;
       overlay.classList.remove("open");
-      if (s.error) toast(`索引失败：${s.error}`, 6000);
-      else if (s.lastReport) toast(`索引完成：${s.lastReport.totalSymbols} 个符号，${s.lastReport.elapsedSeconds.toFixed(1)} 秒`);
+      if (s.error) toast(L(`索引失败：${s.error}`, `Indexing failed: ${s.error}`), 6000);
+      else if (s.lastReport) toast(L(`索引完成：${s.lastReport.totalSymbols} 个符号，${s.lastReport.elapsedSeconds.toFixed(1)} 秒`, `Indexing done: ${s.lastReport.totalSymbols} ${s.lastReport.totalSymbols === 1 ? "symbol" : "symbols"}, ${s.lastReport.elapsedSeconds.toFixed(1)} s`));
       refreshMapAfterIndex();
       await refreshCallViews();
       await refreshRelations();
@@ -1756,7 +2032,7 @@ function pollStatus(): void {
 let mapRefresh: Promise<void> | null = null;
 function refreshMapAfterIndex(): void {
   if (mapRefresh) return;
-  mapRefresh = doRefreshMap().catch((e) => toast(`刷新项目地图失败：${e}`)).finally(() => { mapRefresh = null; });
+  mapRefresh = doRefreshMap().catch((e) => toast(L(`刷新项目地图失败：${e}`, `Failed to refresh Project Map: ${e}`))).finally(() => { mapRefresh = null; });
 }
 
 async function doRefreshMap(): Promise<void> {
@@ -1818,7 +2094,7 @@ async function refreshFocus(): Promise<void> {
   // 等待期间换了焦点（切回网状时按时序焦点重画了）：不要用旧焦点把它盖掉
   if (seq !== graphSeq || a !== api || state.focusNodeId !== GraphState.nodeIdFor(old)) return;
   if (s) await focusSymbol(s, true);
-  else toast("焦点符号在新索引里找不到了");
+  else toast(L("焦点符号在新索引里找不到了", "The focus symbol is not in the new index"));
 }
 
 /** 索引刷新后：网状与时序两边的焦点都按新索引找回重画。 */
@@ -1826,20 +2102,20 @@ async function refreshCallViews(): Promise<void> {
   await refreshFocus();
   if (!api) return;
   const a = api;
-  if (!(await callView.refresh((old) => resolveRefreshedSymbol(a, old))) && callView.mode === "seq") toast("时序图的焦点在新索引里找不到了");
+  if (!(await callView.refresh((old) => resolveRefreshedSymbol(a, old))) && callView.mode === "seq") toast(L("时序图的焦点在新索引里找不到了", "The Sequence focus is not in the new index"));
 }
 $("ov-index").onclick = () => void startIndex(false);
 $("reindex").onclick = () => void startIndex(false);
 $("chain-down").onclick = () => { if (state.focusNodeId) void expandChain(state.focusNodeId, "out"); };
 $("chain-up").onclick = () => {
   // 时序模式：切到网状再往上追（时序图只画往下的调用）；这次切换不算用户的选择
-  if (callView.mode === "seq") { const s = callView.history.current; if (s) void callView.focus(s, { chain: "in" }); else toast("先选一个焦点"); return; }
+  if (callView.mode === "seq") { const s = callView.history.current; if (s) void callView.focus(s, { chain: "in" }); else toast(L("先选一个焦点", "Select a focus first")); return; }
   if (state.focusNodeId) void expandChain(state.focusNodeId, "in");
 };
 $("show-refs").onchange = () => { void refreshFocus(); };
 $("show-types").onchange = () => { void refreshFocus(); };
 $("call-view").querySelectorAll<HTMLButtonElement>("button[data-view]").forEach((b) => {
-  b.onclick = () => void callView.setMode(b.dataset["view"] === "graph" ? "graph" : "seq");
+  b.onclick = () => { closePath(); void callView.setMode(b.dataset["view"] === "graph" ? "graph" : "seq"); };
 });
 $("show-tests").onchange = () => {
   void refreshFocus();
@@ -1893,6 +2169,7 @@ function init(apiBase: string, token: string | null, repoRoot: string | null): v
     relRenderer?.clear(); renderRelationsChrome();
     card?.clear();
     callView.reset();
+    pathDto = null; pathSeq++; pathPicker.cancel(); setPathPicking(false);
     nav.reset();
     graphStale = false;
     render();
@@ -1910,7 +2187,7 @@ function init(apiBase: string, token: string | null, repoRoot: string | null): v
     onToggle: () => { archRenderer?.resize(); mapRenderer?.resize(); },
     runCommand: (command) => {
       if (host.isVsCode) host.post({ type: "command", command });
-      else toast(`（浏览器模式）请在 VS Code 命令面板运行 ${command}`);
+      else toast(L(`（浏览器模式）请在 VS Code 命令面板运行 ${command}`, `(Browser mode) Run ${command} from the VS Code Command Palette`));
     },
   });
   renderer ??= new Renderer($("cy"), {
@@ -1941,6 +2218,7 @@ host.onMessage((msg) => {
     void a?.symbol(msg.symbolId).then((s) => { if (s && seq === symbolRequestSeq && a === api) void focusCall(s, chain); });
   }
   else if (msg.type === "cursorSymbol") onCursorSymbol(msg.symbolId);
+  else if (msg.type === "replayTrail") void replayTrail(msg.steps, msg.at);
   else if (msg.type === "indexChanged") { sawRunning = false; overlay.classList.remove("open"); refreshMapAfterIndex(); void refreshCallViews(); void refreshRelations(); }
   else if (msg.type === "showRelations") {
     if (api) showRelationsFor(msg.symbolId, msg.depth);

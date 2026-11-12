@@ -16,6 +16,11 @@ function cssVar(name: string, fallback: string): string {
 export class MapRenderer {
   private cy: cytoscape.Core;
 
+  /** 导出图片用（cy.png / 抽 SVG 场景，见 exportImage.ts）。 */
+  get core(): cytoscape.Core {
+    return this.cy;
+  }
+
   constructor(container: HTMLElement, cb: MapRendererCallbacks) {
     const fg = cssVar("--vscode-editor-foreground", "#333");
     const muted = cssVar("--vscode-disabledForeground", "#999");

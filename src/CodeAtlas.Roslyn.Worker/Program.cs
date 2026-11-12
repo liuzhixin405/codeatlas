@@ -11,10 +11,12 @@ using CodeAtlas.Indexing.Roslyn;
 
 // --probe：只检查本机有没有能用的 .NET SDK（MSBuild），供 codeatlas 在跑 Roslyn 之前探测。
 // 能运行到这里就说明 .NET 10 运行时在；退出码 0 = 有 SDK（stdout 打印版本与路径），3 = 没有 SDK。
+Loc.Set(Loc.Detect()); // 父进程经 CODEATLAS_LOCALE 传语言
+
 if (args is ["--probe"])
 {
     var msbuild = RoslynAnalyzer.ProbeMsBuild();
-    if (msbuild is null) { Console.Error.WriteLine("codeatlas-roslyn: 没有找到 .NET SDK"); return RoslynRunner.ProbeNoSdkExitCode; }
+    if (msbuild is null) { Console.Error.WriteLine(L("codeatlas-roslyn: 没有找到 .NET SDK", "codeatlas-roslyn: no .NET SDK found")); return RoslynRunner.ProbeNoSdkExitCode; }
     Console.WriteLine(msbuild);
     return 0;
 }
@@ -30,15 +32,15 @@ for (var i = 0; i < args.Length; i++)
         case "--base" when i + 1 < args.Length: basePath = args[++i]; break;
         case "--only" when i + 1 < args.Length: onlyList = args[++i]; break;
         case "-h" or "--help": Usage(); return 0;
-        default: Console.Error.WriteLine($"未知参数：{args[i]}"); Usage(); return 2;
+        default: Console.Error.WriteLine(L($"未知参数：{args[i]}", $"Unknown argument: {args[i]}")); Usage(); return 2;
     }
 }
 if (sln is null || repos.Count == 0) { Usage(); return 2; }
-if (!File.Exists(sln)) { Console.Error.WriteLine($"解决方案不存在：{sln}"); return 2; }
+if (!File.Exists(sln)) { Console.Error.WriteLine(L($"解决方案不存在：{sln}", $"Solution does not exist: {sln}")); return 2; }
 foreach (var repo in repos)
-    if (!Directory.Exists(repo)) { Console.Error.WriteLine($"仓库目录不存在：{repo}"); return 2; }
+    if (!Directory.Exists(repo)) { Console.Error.WriteLine(L($"仓库目录不存在：{repo}", $"Repository directory does not exist: {repo}")); return 2; }
 basePath ??= repos[0];
-if (onlyList is not null && !File.Exists(onlyList)) { Console.Error.WriteLine($"--only 列表文件不存在：{onlyList}"); return 2; }
+if (onlyList is not null && !File.Exists(onlyList)) { Console.Error.WriteLine(L($"--only 列表文件不存在：{onlyList}", $"--only list file does not exist: {onlyList}")); return 2; }
 List<string>? only = onlyList is null ? null : File.ReadAllLines(onlyList).Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
 
 // stderr 被父进程重定向时默认是系统 ANSI 代码页，中文会乱码
@@ -48,7 +50,7 @@ Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 
 var stdout = new StreamWriter(Console.OpenStandardOutput(), new UTF8Encoding(false), 1 << 16) { AutoFlush = false };
 var sw = System.Diagnostics.Stopwatch.StartNew();
-Console.Error.WriteLine($"codeatlas-roslyn: 打开 {sln}{(only is null ? "" : $"（只输出 {only.Count} 个文件及受影响的发送方）")}");
+Console.Error.WriteLine(L($"codeatlas-roslyn: 打开 {sln}{(only is null ? "" : $"（只输出 {only.Count} 个文件及受影响的发送方）")}", $"codeatlas-roslyn: opening {sln}{(only is null ? "" : $" (only emitting {Plural(only.Count, "file", "files")} and affected senders)")}"));
 try
 {
     var sinceFlush = 0;
@@ -57,7 +59,7 @@ try
         stdout.WriteLine(RecordJson.Serialize(record));
         // 进度与结束记录立刻刷出去，父进程才能及时看到；普通记录攒一批
         if (record is ProgressRec or DoneRec or ErrorRec || ++sinceFlush >= 500) { stdout.Flush(); sinceFlush = 0; }
-        if (record is DoneRec done) Console.Error.WriteLine($"codeatlas-roslyn: 完成 projects={done.Projects} documents={done.Documents} errors={done.Errors} elapsed={sw.Elapsed.TotalSeconds:F1}s");
+        if (record is DoneRec done) Console.Error.WriteLine(L("codeatlas-roslyn: 完成", "codeatlas-roslyn: done") + $" projects={done.Projects} documents={done.Documents} errors={done.Errors} elapsed={sw.Elapsed.TotalSeconds:F1}s");
     }
     stdout.Flush();
     return 0;
@@ -65,7 +67,7 @@ try
 catch (OperationCanceledException)
 {
     stdout.Flush();
-    Console.Error.WriteLine("codeatlas-roslyn: 已取消");
+    Console.Error.WriteLine(L("codeatlas-roslyn: 已取消", "codeatlas-roslyn: cancelled"));
     return 130;
 }
 catch (InvalidOperationException ex) when (ex.Message.Contains("compatible .NET SDK was not found", StringComparison.OrdinalIgnoreCase))
@@ -73,14 +75,14 @@ catch (InvalidOperationException ex) when (ex.Message.Contains("compatible .NET 
     // 仓库的 global.json 锁了 SDK 版本、本机没有兼容的：给一句看得懂的话，不打堆栈
     stdout.Flush();
     var requested = System.Text.RegularExpressions.Regex.Match(ex.Message, @"Requested SDK version:\s*(\S+)").Groups[1].Value;
-    Console.Error.WriteLine($"codeatlas-roslyn: 失败 仓库的 global.json 要求 .NET SDK {(requested.Length > 0 ? requested : "（见 global.json）")}，本机没有兼容的版本（rollForward 规则见 global.json）。");
+    Console.Error.WriteLine(L($"codeatlas-roslyn: 失败 仓库的 global.json 要求 .NET SDK {(requested.Length > 0 ? requested : "（见 global.json）")}，本机没有兼容的版本（rollForward 规则见 global.json）。", $"codeatlas-roslyn: failed: The repository's global.json requires .NET SDK {(requested.Length > 0 ? requested : "(see global.json)")}, but no compatible version is installed (see global.json for rollForward rules)."));
     return RoslynRunner.GlobalJsonSdkMissingExitCode;
 }
 catch (Exception ex)
 {
     stdout.Flush();
-    Console.Error.WriteLine($"codeatlas-roslyn: 失败 {ex}");
+    Console.Error.WriteLine(L($"codeatlas-roslyn: 失败 {ex}", $"codeatlas-roslyn: failed: {ex}"));
     return 1;
 }
 
-static void Usage() => Console.Error.WriteLine("用法：codeatlas-roslyn --sln <解决方案或项目文件> --repo <仓库根目录> [--repo <另一个根> …] [--base <输出路径基准，缺省为第一个 --repo>] [--only <列表文件，每行一个绝对路径>]\n       codeatlas-roslyn --probe   检查本机 .NET SDK");
+static void Usage() => Console.Error.WriteLine(L("用法：codeatlas-roslyn --sln <解决方案或项目文件> --repo <仓库根目录> [--repo <另一个根> …] [--base <输出路径基准，缺省为第一个 --repo>] [--only <列表文件，每行一个绝对路径>]\n       codeatlas-roslyn --probe   检查本机 .NET SDK", "Usage: codeatlas-roslyn --sln <solution or project file> --repo <repository root> [--repo <another root> …] [--base <output path base, defaults to the first --repo>] [--only <list file, one absolute path per line>]\n       codeatlas-roslyn --probe   check the local .NET SDK"));

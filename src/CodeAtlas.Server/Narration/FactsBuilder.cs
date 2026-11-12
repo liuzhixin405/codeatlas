@@ -59,29 +59,35 @@ public static class FactsBuilder
     {
         var w = new FactWriter();
         var names = arch.Nodes.ToDictionary(n => n.Key, n => n, StringComparer.Ordinal);
-        w.Line(10, $"对象：容器 {node.Name}（键 {node.Key}）", null);
-        w.Line(10, $"类型 {node.Kind}/{node.SubKind}，来源 {node.Source}，路径 {node.Path ?? "-"}，端口 [{string.Join(",", node.Ports)}]，成员项目 {node.Members.Count} 个，出口登记 {node.Outbound} 处", $"node:{node.Key}");
-        foreach (var m in node.Members) w.Line(6, $"  成员项目目录：{(m.Length == 0 ? "（仓库根）" : m)}", null);
-        foreach (var e in node.Evidence.Take(3)) w.Line(4, $"  判定证据：{e.File}{(e.Line is { } l ? ":" + l : "")}{(e.Note is null ? "" : " " + e.Note)}", null);
+        w.Line(10, L($"对象：容器 {node.Name}（键 {node.Key}）", $"Object: container {node.Name} (key {node.Key})"), null);
+        w.Line(10, L($"类型 {node.Kind}/{node.SubKind}，来源 {node.Source}，路径 {node.Path ?? "-"}，端口 [{string.Join(",", node.Ports)}]，成员项目 {node.Members.Count} 个，出口登记 {node.Outbound} 处",
+            $"Kind {node.Kind}/{node.SubKind}, source {node.Source}, path {node.Path ?? "-"}, ports [{string.Join(",", node.Ports)}], {node.Members.Count} member projects, {node.Outbound} registered outbound calls"), $"node:{node.Key}");
+        foreach (var m in node.Members) w.Line(6, L($"  成员项目目录：{(m.Length == 0 ? "（仓库根）" : m)}", $"  Member project directory: {(m.Length == 0 ? "(repository root)" : m)}"), null);
+        foreach (var e in node.Evidence.Take(3))
+        {
+            var rest = $"{e.File}{(e.Line is { } l ? ":" + l : "")}{(e.Note is null ? "" : " " + e.Note)}";
+            w.Line(4, L($"  判定证据：{rest}", $"  Evidence: {rest}"), null);
+        }
 
         var outgoing = arch.Edges.Where(e => e.From == node.Key).ToList();
         var incoming = arch.Edges.Where(e => e.To == node.Key).ToList();
-        w.Line(9, $"出边 {outgoing.Count} 条（本容器调用别人），入边 {incoming.Count} 条（别人调用本容器）", null);
+        w.Line(9, L($"出边 {outgoing.Count} 条（本容器调用别人），入边 {incoming.Count} 条（别人调用本容器）",
+            $"{outgoing.Count} outgoing edges (this container calls others), {incoming.Count} incoming edges (others call this container)"), null);
         foreach (var e in outgoing.OrderByDescending(e => e.Confidence).ThenBy(e => e.To, StringComparer.Ordinal))
             w.Line(8, EdgeLine("→", e, names.GetValueOrDefault(e.To)), $"edge:{e.From}→{e.To}:{e.Protocol}");
         foreach (var e in incoming.OrderByDescending(e => e.Confidence).ThenBy(e => e.From, StringComparer.Ordinal))
             w.Line(8, EdgeLine("←", e, names.GetValueOrDefault(e.From)), $"edge:{e.From}→{e.To}:{e.Protocol}");
         // 对端节点：模型要提到它们时有 id 可引
         foreach (var other in outgoing.Select(e => e.To).Concat(incoming.Select(e => e.From)).Distinct(StringComparer.Ordinal).Where(k => k != node.Key))
-            if (names.TryGetValue(other, out var o)) w.Line(5, $"相关节点 {o.Name}：{o.Kind}/{o.SubKind}，来源 {o.Source}", $"node:{o.Key}");
+            if (names.TryGetValue(other, out var o)) w.Line(5, L($"相关节点 {o.Name}：{o.Kind}/{o.SubKind}，来源 {o.Source}", $"Related node {o.Name}: {o.Kind}/{o.SubKind}, source {o.Source}"), $"node:{o.Key}");
 
-        var byKind = entries.GroupBy(e => e.Kind, StringComparer.Ordinal).OrderByDescending(g => g.Count()).Select(g => $"{g.Key} {g.Count()}");
-        w.Line(9, $"入口 {entries.Count} 个（{string.Join("，", byKind)}）", null);
+        var byKind = entries.GroupBy(e => e.Kind, StringComparer.Ordinal).OrderByDescending(g => g.Count()).Select(g => $"{g.Key} {g.Count()}").ToList();
+        w.Line(9, L($"入口 {entries.Count} 个（{string.Join("，", byKind)}）", $"{entries.Count} entries ({string.Join(", ", byKind)})"), null);
         foreach (var e in entries.Take(MaxEntries))
-            w.Line(7, $"  入口 {e.Kind} {e.HttpMethod ?? ""} {e.Route ?? e.Name}  方法 {e.QualifiedName}  {e.File}:{e.Line}", $"entry:{e.SymbolId}");
-        if (entries.Count > MaxEntries) w.Line(7, $"  （其余 {entries.Count - MaxEntries} 个入口略）", null);
+            w.Line(7, L($"  入口 {e.Kind} {e.HttpMethod ?? ""} {e.Route ?? e.Name}  方法 {e.QualifiedName}  {e.File}:{e.Line}", $"  Entry {e.Kind} {e.HttpMethod ?? ""} {e.Route ?? e.Name}  method {e.QualifiedName}  {e.File}:{e.Line}"), $"entry:{e.SymbolId}");
+        if (entries.Count > MaxEntries) w.Line(7, L($"  （其余 {entries.Count - MaxEntries} 个入口略）", $"  ({entries.Count - MaxEntries} more entries omitted)"), null);
         foreach (var c in arch.Conflicts.Where(c => c.Message.Contains(node.Name, StringComparison.Ordinal) || c.Message.Contains(node.Key, StringComparison.Ordinal)))
-            w.Line(6, $"声明与发现的冲突 [{c.Kind}]：{c.Message}", null);
+            w.Line(6, L($"声明与发现的冲突 [{c.Kind}]：{c.Message}", $"Conflict between declaration and discovery [{c.Kind}]: {c.Message}"), null);
         return w.Build(NarrativePresets.Container, node.Key, node.Name);
     }
 
@@ -89,9 +95,11 @@ public static class FactsBuilder
     {
         var otherName = other?.Name ?? (arrow == "→" ? e.To : e.From);
         var first = e.Evidence.Count > 0 ? e.Evidence[0] : null;
-        return $"  {arrow} {otherName}  协议 {e.Protocol}  置信度 {e.Confidence.ToString("0.0", CultureInfo.InvariantCulture)}  来源 {e.Source}"
-             + (e.ConfigKey is null ? "" : $"  配置键 {e.ConfigKey}") + (e.Url is null ? "" : $"  地址 {e.Url}")
-             + (first is null ? "" : $"  证据 {first.File}{(first.Line is { } l ? ":" + l : "")}");
+        var confidence = e.Confidence.ToString("0.0", CultureInfo.InvariantCulture);
+        var evidence = first is null ? null : $"{first.File}{(first.Line is { } l ? ":" + l : "")}";
+        return L($"  {arrow} {otherName}  协议 {e.Protocol}  置信度 {confidence}  来源 {e.Source}", $"  {arrow} {otherName}  protocol {e.Protocol}  confidence {confidence}  source {e.Source}")
+             + (e.ConfigKey is null ? "" : L($"  配置键 {e.ConfigKey}", $"  config key {e.ConfigKey}")) + (e.Url is null ? "" : L($"  地址 {e.Url}", $"  URL {e.Url}"))
+             + (evidence is null ? "" : L($"  证据 {evidence}", $"  evidence {evidence}"));
     }
 
     /// <summary>组件：该 DSM 行 / 列的依赖数、是否在环里、热点、隐性耦合。key 形如 "&lt;容器键&gt;|&lt;组件键&gt;"。</summary>
@@ -100,43 +108,64 @@ public static class FactsBuilder
         var w = new FactWriter();
         var index = dsm.Components.ToList().IndexOf(comp);
         var inCycle = dsm.Cycles.FirstOrDefault(c => c.Contains(comp.Key));
-        w.Line(10, $"对象：组件 {comp.Label}（键 {comp.Key}），属于容器 {containerName}，层级 root=\"{dsm.Root}\"，同层共 {dsm.Components.Count} 个组件，依赖序第 {index + 1} 位（越靠前被依赖越多）", null);
-        w.Line(10, $"符号 {comp.Symbols} 个，文件 {comp.Files} 个，{(comp.HasChildren ? "还能往下钻" : "没有更深的层级")}，{(inCycle is null ? "不在环里" : "在环里")}"
-                 + (comp.Hot is null ? "，没有 git 统计" : $"，git：{(comp.Hot.Commits is { } commits ? $"{commits} 次提交" : $"文件修订合计 {comp.Hot.Revisions}")}，+{comp.Hot.Added}/-{comp.Hot.Deleted} 行，最近提交 {comp.Hot.LastCommit}（{comp.Hot.AgeMonths} 个月前）"), $"comp:{comp.Key}",
+        w.Line(10, L($"对象：组件 {comp.Label}（键 {comp.Key}），属于容器 {containerName}，层级 root=\"{dsm.Root}\"，同层共 {dsm.Components.Count} 个组件，依赖序第 {index + 1} 位（越靠前被依赖越多）",
+            $"Object: component {comp.Label} (key {comp.Key}), in container {containerName}, level root=\"{dsm.Root}\", {dsm.Components.Count} components at this level, position {index + 1} in dependency order (earlier = depended on more)"), null);
+        var basics = L($"符号 {comp.Symbols} 个，文件 {comp.Files} 个，{(comp.HasChildren ? "还能往下钻" : "没有更深的层级")}，{(inCycle is null ? "不在环里" : "在环里")}",
+            $"{comp.Symbols} symbols, {comp.Files} files, {(comp.HasChildren ? "can drill down further" : "no deeper levels")}, {(inCycle is null ? "not in a cycle" : "in a cycle")}");
+        string gitPart;
+        if (comp.Hot is null) gitPart = L("，没有 git 统计", ", no git statistics");
+        else
+        {
+            var hot = comp.Hot;
+            var revisions = hot.Commits is { } commits ? L($"{commits} 次提交", $"{commits} commits") : L($"文件修订合计 {hot.Revisions}", $"{hot.Revisions} file revisions in total");
+            gitPart = L($"，git：{revisions}，+{hot.Added}/-{hot.Deleted} 行，最近提交 {hot.LastCommit}（{hot.AgeMonths} 个月前）",
+                $", git: {revisions}, +{hot.Added}/-{hot.Deleted} lines, last commit {hot.LastCommit} ({hot.AgeMonths} months ago)");
+        }
+        w.Line(10, basics + gitPart, $"comp:{comp.Key}",
             // 指纹里不放 git 计数：每次提交都变，会让叙述动不动就"过期"；代码真改了由 Sources 判
-            fingerprint: $"符号 {comp.Symbols} 个，文件 {comp.Files} 个，{(comp.HasChildren ? "还能往下钻" : "没有更深的层级")}，{(inCycle is null ? "不在环里" : "在环里")}");
+            fingerprint: basics);
 
         var outCells = dsm.Cells.Where(c => c.Row == index).OrderByDescending(c => c.Count).ToList();
         var inCells = dsm.Cells.Where(c => c.Col == index).OrderByDescending(c => c.Count).ToList();
-        w.Line(9, $"依赖出去 {outCells.Count} 个组件（共 {outCells.Sum(c => c.Count)} 条边），被 {inCells.Count} 个组件依赖（共 {inCells.Sum(c => c.Count)} 条边）", null);
+        w.Line(9, L($"依赖出去 {outCells.Count} 个组件（共 {outCells.Sum(c => c.Count)} 条边），被 {inCells.Count} 个组件依赖（共 {inCells.Sum(c => c.Count)} 条边）",
+            $"Depends on {outCells.Count} components ({outCells.Sum(c => c.Count)} edges in total), depended on by {inCells.Count} components ({inCells.Sum(c => c.Count)} edges in total)"), null);
         foreach (var c in outCells)
         {
             var to = dsm.Components[c.Col];
-            w.Line(8, $"  依赖 → {to.Label}  {c.Count} 条（{Kinds(c.Kinds)}）{(c.Col > index ? "  ⚠ 反向：依赖了排在自己后面的组件" : "")}", $"cell:{comp.Key}→{to.Key}");
+            w.Line(8, L($"  依赖 → {to.Label}  {c.Count} 条（{Kinds(c.Kinds)}）{(c.Col > index ? "  ⚠ 反向：依赖了排在自己后面的组件" : "")}",
+                $"  depends on → {to.Label}  {c.Count} edges ({Kinds(c.Kinds)}){(c.Col > index ? "  ⚠ backward: depends on a component ordered after itself" : "")}"), $"cell:{comp.Key}→{to.Key}");
         }
         foreach (var c in inCells)
         {
             var from = dsm.Components[c.Row];
-            w.Line(7, $"  被依赖 ← {from.Label}  {c.Count} 条（{Kinds(c.Kinds)}）", $"cell:{from.Key}→{comp.Key}");
+            w.Line(7, L($"  被依赖 ← {from.Label}  {c.Count} 条（{Kinds(c.Kinds)}）", $"  depended on by ← {from.Label}  {c.Count} edges ({Kinds(c.Kinds)})"), $"cell:{from.Key}→{comp.Key}");
         }
         if (inCycle is not null)
-            w.Line(9, $"环成员：{string.Join(" ↔ ", inCycle.Select(k => dsm.Components.FirstOrDefault(x => x.Key == k)?.Label ?? k))}", null);
+        {
+            var members = string.Join(" ↔ ", inCycle.Select(k => dsm.Components.FirstOrDefault(x => x.Key == k)?.Label ?? k));
+            w.Line(9, L($"环成员：{members}", $"Cycle members: {members}"), null);
+        }
         foreach (var cp in dsm.Coupling.Where(cp => cp.A == index || cp.B == index).OrderByDescending(cp => cp.Shared))
         {
             var other = dsm.Components[cp.A == index ? cp.B : cp.A];
-            w.Line(7, $"隐性耦合 ~ {other.Label}：共同修订 {cp.Shared} 次，耦合度 {cp.Degree.ToString("0.00", CultureInfo.InvariantCulture)}，但没有静态依赖边", $"comp:{other.Key}",
-                fingerprint: $"隐性耦合 ~ {other.Label}");
+            var degree = cp.Degree.ToString("0.00", CultureInfo.InvariantCulture);
+            w.Line(7, L($"隐性耦合 ~ {other.Label}：共同修订 {cp.Shared} 次，耦合度 {degree}，但没有静态依赖边", $"Hidden coupling ~ {other.Label}: changed together {cp.Shared} times, coupling degree {degree}, but no static dependency edges"), $"comp:{other.Key}",
+                fingerprint: L($"隐性耦合 ~ {other.Label}", $"Hidden coupling ~ {other.Label}"));
         }
         // 提到的邻居组件给个简介，让模型能引
         foreach (var n in outCells.Select(c => dsm.Components[c.Col]).Concat(inCells.Select(c => dsm.Components[c.Row])).DistinctBy(c => c.Key))
-            w.Line(5, $"邻居组件 {n.Label}：符号 {n.Symbols}，文件 {n.Files}{(n.Hot is null ? "" : $"，{(n.Hot.Commits is { } nc ? $"{nc} 次提交" : $"文件修订合计 {n.Hot.Revisions}")}")}{(dsm.Cycles.Any(c => c.Contains(n.Key)) ? "，在环里" : "")}", $"comp:{n.Key}",
-                fingerprint: $"邻居组件 {n.Label}：符号 {n.Symbols}，文件 {n.Files}{(dsm.Cycles.Any(c => c.Contains(n.Key)) ? "，在环里" : "")}");
-        if (dsm.Note is not null) w.Line(4, $"备注：{dsm.Note}", null);
-        if (!dsm.GitAvailable) w.Line(4, "git 统计不可用（热点与隐性耦合为空）", null);
+        {
+            var hot = n.Hot is null ? "" : n.Hot.Commits is { } nc ? L($"，{nc} 次提交", $", {nc} commits") : L($"，文件修订合计 {n.Hot.Revisions}", $", {n.Hot.Revisions} file revisions in total");
+            var cycle = dsm.Cycles.Any(c => c.Contains(n.Key)) ? L("，在环里", ", in a cycle") : "";
+            var head = L($"邻居组件 {n.Label}：符号 {n.Symbols}，文件 {n.Files}", $"Neighbor component {n.Label}: {n.Symbols} symbols, {n.Files} files");
+            w.Line(5, head + hot + cycle, $"comp:{n.Key}", fingerprint: head + cycle);
+        }
+        if (dsm.Note is not null) w.Line(4, L($"备注：{dsm.Note}", $"Note: {dsm.Note}"), null);
+        if (!dsm.GitAvailable) w.Line(4, L("git 统计不可用（热点与隐性耦合为空）", "git statistics unavailable (hotspots and hidden coupling are empty)"), null);
         return w.Build(NarrativePresets.Component, key, comp.Label);
     }
 
-    private static string Kinds(Dictionary<string, int> kinds) => string.Join("、", kinds.OrderByDescending(k => k.Value).Select(k => $"{k.Key} {k.Value}"));
+    private static string Kinds(Dictionary<string, int> kinds) => string.Join(ListSep, kinds.OrderByDescending(k => k.Value).Select(k => $"{k.Key} {k.Value}"));
 
     /// <summary>流程：FlowDto 树（深度 ≤ 4）、参与者、行为链、入口方法源码（最多 80 行）。</summary>
     public static Facts Flow(FlowDto flow, EntryDto? entry, string containerName, IReadOnlyList<string>? sourceLines, int sourceStartLine)
@@ -144,12 +173,16 @@ public static class FactsBuilder
         var w = new FactWriter();
         var actors = flow.Actors.ToDictionary(a => a.Key, a => a, StringComparer.Ordinal);
         var key = flow.EntrySymbolId.ToString(CultureInfo.InvariantCulture);
-        w.Line(10, $"对象：入口流程 {flow.EntryLabel}，容器 {containerName}" + (entry is null ? "" : $"，类型 {entry.Kind}{(entry.HttpMethod is null ? "" : " " + entry.HttpMethod)}，方法 {entry.QualifiedName}，位置 {entry.File}:{entry.Line}"), $"entry:{key}");
-        w.Line(9, $"调用树节点 {flow.Nodes} 个{(flow.Truncated ? "（已按预算截断）" : "")}，参与者 {flow.Actors.Count} 个：{string.Join("，", flow.Actors.Select(a => $"{a.Label}[{a.Kind}]"))}", null);
-        if (flow.Behaviors.Count > 0) w.Line(8, $"管道行为（每次分派都会经过）：{string.Join("、", flow.Behaviors)}", null);
-        if (flow.Note is not null) w.Line(8, $"备注：{flow.Note}", null);
+        w.Line(10, L($"对象：入口流程 {flow.EntryLabel}，容器 {containerName}", $"Object: entry flow {flow.EntryLabel}, container {containerName}")
+            + (entry is null ? "" : L($"，类型 {entry.Kind}{(entry.HttpMethod is null ? "" : " " + entry.HttpMethod)}，方法 {entry.QualifiedName}，位置 {entry.File}:{entry.Line}",
+                $", kind {entry.Kind}{(entry.HttpMethod is null ? "" : " " + entry.HttpMethod)}, method {entry.QualifiedName}, location {entry.File}:{entry.Line}")), $"entry:{key}");
+        var actorList = flow.Actors.Select(a => $"{a.Label}[{a.Kind}]").ToList();
+        w.Line(9, L($"调用树节点 {flow.Nodes} 个{(flow.Truncated ? "（已按预算截断）" : "")}，参与者 {flow.Actors.Count} 个：{string.Join("，", actorList)}",
+            $"{flow.Nodes} call tree nodes{(flow.Truncated ? " (truncated to budget)" : "")}, {flow.Actors.Count} actors: {string.Join(", ", actorList)}"), null);
+        if (flow.Behaviors.Count > 0) w.Line(8, L($"管道行为（每次分派都会经过）：{string.Join("、", flow.Behaviors)}", $"Pipeline behaviors (run on every dispatch): {string.Join(", ", flow.Behaviors)}"), null);
+        if (flow.Note is not null) w.Line(8, L($"备注：{flow.Note}", $"Note: {flow.Note}"), null);
 
-        w.Line(9, "调用树（缩进 = 深度；[actor] 是所在参与者；via 是边的依据；数字是置信度）：", null);
+        w.Line(9, L("调用树（缩进 = 深度；[actor] 是所在参与者；via 是边的依据；数字是置信度）：", "Call tree (indent = depth; [actor] is the owning actor; via is the basis of the edge; the number is the confidence):"), null);
         var seen = new HashSet<string>(StringComparer.Ordinal);
         void Walk(FlowNodeDto n)
         {
@@ -163,18 +196,19 @@ public static class FactsBuilder
             var id = n.SymbolId is { } sid && n.Depth > 0 && n.Kind is not ("external-group" or "more" or "hop") ? $"sym:{sid}" : null;
             // 同一符号在树里出现多次只给一次 id（文本里重复的 id 会让集合去重，但别让模型以为是两条事实）
             if (id is not null && !seen.Add(id)) id = null;
-            var label = n.Kind == "more" ? $"（还有 {n.Hidden} 个分支折叠）" : n.Kind == "external-group" ? $"外部 / 框架调用：{n.QualifiedName}" : $"{n.Label}  {n.QualifiedName}";
+            var label = n.Kind == "more" ? L($"（还有 {n.Hidden} 个分支折叠）", $"({n.Hidden} more branches collapsed)") : n.Kind == "external-group" ? L($"外部 / 框架调用：{n.QualifiedName}", $"External / framework calls: {n.QualifiedName}") : $"{n.Label}  {n.QualifiedName}";
             var priority = n.Depth switch { 0 => 9, 1 => 8, 2 => 7, 3 => 6, _ => 5 };
             w.Line(priority, $"{pad}{label}  [{actor}]  {n.Kind}{via} {n.Confidence.ToString("0.0", CultureInfo.InvariantCulture)}{count}{note}", id);
             foreach (var c in n.Children) Walk(c);
         }
         Walk(flow.Root);
-        if (Deeper(flow.Root)) w.Line(5, $"  （深度超过 {MaxFlowDepth} 的分支略）", null);
+        if (Deeper(flow.Root)) w.Line(5, L($"  （深度超过 {MaxFlowDepth} 的分支略）", $"  (branches deeper than {MaxFlowDepth} omitted)"), null);
 
         if (sourceLines is { Count: > 0 })
         {
             var shown = sourceLines.Take(MaxSourceLines).ToList();
-            w.Line(6, $"入口方法源码（{(entry?.File ?? "")} 第 {sourceStartLine} 行起，共 {sourceLines.Count} 行{(sourceLines.Count > MaxSourceLines ? $"，只给前 {MaxSourceLines} 行" : "")}）：", null);
+            w.Line(6, L($"入口方法源码（{(entry?.File ?? "")} 第 {sourceStartLine} 行起，共 {sourceLines.Count} 行{(sourceLines.Count > MaxSourceLines ? $"，只给前 {MaxSourceLines} 行" : "")}）：",
+                $"Entry method source ({(entry?.File ?? "")} from line {sourceStartLine}, {sourceLines.Count} lines{(sourceLines.Count > MaxSourceLines ? $", only the first {MaxSourceLines} shown" : "")}):"), null);
             w.Block(3, "```\n" + string.Join("\n", shown) + "\n```");
         }
         return w.Build(NarrativePresets.Flow, key, flow.EntryLabel);
@@ -217,7 +251,7 @@ public static class FactsBuilder
                 fp.Append(l.Fingerprint).Append('\n');
                 if (l.Id is not null) ids.Add(l.Id);
             }
-            if (omitted > 0) sb.Append($"（事实超出预算，已按重要性省略 {omitted} 条）\n");
+            if (omitted > 0) sb.Append(L($"（事实超出预算，已按重要性省略 {omitted} 条）\n", $"({omitted} facts over budget omitted by importance)\n"));
             return new Facts(kind, key, title, sb.ToString(), ids, omitted) { FingerprintText = fp.ToString() };
         }
     }

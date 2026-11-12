@@ -36,6 +36,11 @@ export function labelWidth(label: string, bold = false): number {
 export class Renderer {
   private cy: cytoscape.Core;
 
+  /** 导出图片用（cy.png / 抽 SVG 场景，见 exportImage.ts）。 */
+  get core(): cytoscape.Core {
+    return this.cy;
+  }
+
   constructor(container: HTMLElement, private readonly cb: RendererCallbacks) {
     const fg = cssVar("--vscode-editor-foreground", "#333");
     const bg = cssVar("--vscode-editor-background", "#fff");

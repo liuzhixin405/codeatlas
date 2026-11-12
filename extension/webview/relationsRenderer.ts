@@ -23,6 +23,11 @@ function cssVar(name: string, fallback: string): string {
 export class RelationsRenderer {
   private cy: cytoscape.Core;
 
+  /** 导出图片用（cy.png / 抽 SVG 场景，见 exportImage.ts）。 */
+  get core(): cytoscape.Core {
+    return this.cy;
+  }
+
   constructor(container: HTMLElement, cb: RelationsRendererCallbacks) {
     const fg = cssVar("--vscode-editor-foreground", "#333");
     const bg = cssVar("--vscode-editor-background", "#fff");

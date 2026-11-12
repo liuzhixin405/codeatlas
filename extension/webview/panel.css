@@ -332,3 +332,21 @@ footer a { color: var(--ca-accent); cursor: pointer; text-decoration: none; }
 /* 入口流程 / 调用图时序标题里的「经框架流程 ▸」 */
 a.flow-fw-jump { color: var(--ca-accent); cursor: pointer; align-self: flex-start; }
 a.flow-fw-jump:hover { text-decoration: underline; }
+/* 过期提示：视图涉及的文件在上次索引后改过（服务端 staleFiles）。不挡操作：时序图标题里一行、模块关系画布顶上居中一条 */
+.stale-bar { display: flex; align-items: center; gap: 8px; padding: 3px 8px; font-size: 12px; color: var(--vscode-editorWarning-foreground, #d18616); background: var(--ca-widget); border: 1px solid var(--ca-border); border-radius: 3px; }
+.stale-bar .stale-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.stale-bar button { flex: none; padding: 1px 8px; font-size: 12px; }
+.flow-stale { margin-top: 4px; width: fit-content; max-width: 100%; }
+#rel-stale { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 24px); z-index: 5; }
+
+/* 两点间调用路径：低置信度（< 0.7）的一步画虚线；分派边本来就是橙色虚线 */
+.path-diagram .flow-arrow.weak .flow-line { border-top-style: dashed; }
+.path-diagram .flow-arrow.weak .flow-loop { border-style: dashed; border-left: none; }
+.path-diagram .path-close { margin-left: auto; cursor: pointer; }
+#path-to.active { outline: 1px solid var(--vscode-focusBorder, #007fd4); }
+
+/* 合成边（事件频道配对 emit('x') → on('x', handler)）：灰紫虚线，标签旁「事件 x」——不是直接调用 */
+.flow-arrow.via-event { --c: #8a63d2; }
+.flow-arrow.via-event .flow-line { border-top-style: dashed; }
+.flow-arrow.via-event .flow-loop { border-style: dashed; border-left: none; }
+.flow-arrow.via-event .flow-label .via { font-size: 9px; border-style: dashed; }

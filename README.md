@@ -13,9 +13,9 @@
 1. 打开 [CodeTrail Graph 插件市场页面](https://marketplace.visualstudio.com/items?itemName=164910441.codetrail-graph) 点击 **Install**，或运行 `code --install-extension 164910441.codetrail-graph`。离线包及源码构建方式见 [使用指南](docs/vscode-extension-guide.md)；构建需要 .NET 10 SDK，最终用户无需另装 .NET 运行时。
 2. 打开仓库，把光标放在任意方法或类名上，**右键 → CodeTrail Graph → 在调用图中查看**（或 `Ctrl+Alt+G`）。第一次会提示建立索引，耗时取决于项目规模与是否启用 Roslyn。
 3. 调用图默认是**时序图**，按调用顺序从上到下、按项目分列；工具栏「时序 | 网状」可切换画法。网状图自动向下展开主分支，「↑ 到源头」追调用者。项目地图包括容器、框架流程、命名空间，面板支持跨视图后退 / 前进。
-4. 保存文件后自动增量索引（可在设置 `codeatlas.indexOnSave` 关闭）；C# 有待更新文件时会自动补算 Roslyn。服务进程由扩展管理，命令面板里有「CodeTrail Graph: 重启服务」。
+4. 保存文件后自动增量索引（可在设置 `codeatlas.indexOnSave` 关闭）；编辑器之外的改动（AI 助手直接写盘、git pull / 切分支）由磁盘监听防抖后增量索引（`codeatlas.indexOnExternalChange`），服务启动时还会和磁盘对一次账；视图涉及的文件在索引后改过时会提示结果可能过期；C# 有待更新文件时会自动补算 Roslyn。服务进程由扩展管理，命令面板里有「CodeTrail Graph: 重启服务」。
 
-0.1.1 使用索引格式 **12**：旧索引会自动全量重建。原始引用持久化后，增量索引可重新绑定未修改的调用方；索引请求串行排队、全量请求优先，过期的异步视图响应不会覆盖新选择。性能变化需在实际项目上测量，不保证固定耗时。
+当前使用索引格式 **13**（0.1.1 发布时为 12；13 加了 TS / JS 事件频道的合成边，见下面「怎么读 confidence」）：旧索引会自动全量重建。原始引用持久化后，增量索引可重新绑定未修改的调用方；索引请求串行排队、全量请求优先，过期的异步视图响应不会覆盖新选择。性能变化需在实际项目上测量，不保证固定耗时。
 
 命令行方式仍然可用，见下面。
 
@@ -102,8 +102,68 @@ codeatlas query D:\code\shop-api GetAsync
 - 一个接口都有哪些实现：`codeatlas query <repo> <接口限定名> --in --kinds implements`
 - 一个方法往下三层都碰了什么：`codeatlas query <repo> <方法限定名> --out --depth 3`
 - 一个 Repository 方法被哪些 Handler 用：`codeatlas query <repo> <方法限定名> --in`
+- 从 A 怎么走到 B：`codeatlas query <repo> <A> --to <B>`，列出 A → B 的调用路径（沿 calls 与 dispatches 分派边，默认最多 8 步、10 条，`--depth N` 改步数上限（≤ 12）、`--max-paths N` 改条数（≤ 50）、`--json` 输出结构化结果）。最短的在前；每步一行，`→` 是 confidence ≥ 0.7 的调用，`⇢` 是分派边或低置信度边，不是确定调用。两端同名多个时会列出候选（带 `#符号id`，可直接当参数）。面板里对应调用图工具栏的「⇢ 路径到…」
+
+### 5. CI：文件级 import 环
+
+```bash
+codeatlas index <repo> --db ci.db
+codeatlas arch <repo> --cycles files --db ci.db          # 有环退出码 1，没环 0，没有索引 / 参数错误 2
+codeatlas arch <repo> --cycles files --json --db ci.db   # 结构化输出：每个环的文件、一条最短环路径与每一步的 import 行号
+```
+
+基于索引里的 imports 边，只看"文件 → 文件"的 import（TS / JS、Python、Java、Go 的模块对模块）；C# 的 `using` 指向命名空间、外部包指向 `external:…`，不是文件，不参与（命名空间 / 项目级的环用 `arch --dsm`）。默认只算**确定 import**：confidence 1.0，且一条 import 只解析到一个文件。`--edges all` 再加**启发式边**：confidence < 1.0 的，以及一条 import 展开到多个文件的（Go 的包 import 连到包目录下每个文件、Java 的 `import a.b.*`）——这些是包级依赖，换成文件级会凭空多出环，所以默认不算；输出里会写有多少条没算，算进去时在那一步后面标「启发式」。
 
 TS 仓库的限定名格式是 `相对路径:类.方法`，比如 `web/src/components/LoginPage/index.tsx:LoginPage`；C# 是命名空间链 `Acme.Orders.OrderService.Find`。
+
+### 6. 给 AI 编程助手用（MCP）
+
+`codeatlas mcp <repo> [--db <path>]` 在 stdio 上提供 MCP server（JSON-RPC 2.0，一行一条消息；stdout 只有协议消息，日志在 stderr），让 Claude Code 等助手直接查索引。先照常 `codeatlas index <repo>` 建好索引；之后重建索引不用重启 server（每次调用重新打开库）。
+
+在 Claude Code 里注册（项目级，写进仓库根的 `.mcp.json`）：
+
+```bash
+claude mcp add --scope project codeatlas -- codeatlas mcp .
+```
+
+`.` 是 Claude Code 启动 server 时的工作目录（项目根）；不放心就写仓库的绝对路径。也可以手写 `.mcp.json`（`command` 写可执行文件的完整路径更稳；用了 `--db` 就把同一个 `--db` 加进 `args`）：
+
+```json
+{
+  "mcpServers": {
+    "codeatlas": { "command": "D:\\tools\\codeatlas\\codeatlas.exe", "args": ["mcp", "."] }
+  }
+}
+```
+
+工具：
+
+| 工具 | 作用 |
+|---|---|
+| `codeatlas_explore` | **主工具**。输入自然语言问题或一串符号名 / 文件名，一次返回：最相关符号的源码（磁盘实时读、带行号、按文件分组）、它们之间的调用路径（含分派边）、各自调出去的调用、影响范围摘要（直接调用方、测试调用方数、受影响入口）。`maxChars` 调预算（默认 24000 字符），超出按相关度截断并列出没贴的符号；文件在建索引后改过（大小 / 修改时间对不上）时顶部有过期警告 |
+| `codeatlas_search` | 按名字前缀找符号 |
+| `codeatlas_callers` / `codeatlas_callees` | 单个符号的直接调用方 / 调出去的调用 |
+| `codeatlas_impact` | 完整影响范围（所有受影响入口） |
+| `codeatlas_status` | 索引状态与过期文件 |
+
+每条边都带 confidence（见下节）；0.3 的同名多候选在输出里标"低置信"，不当成确定的调用。
+
+### 7. 这次改动波及哪些入口和测试（affected）
+
+```bash
+codeatlas affected D:\code\shop-api                       # 还没提交的改动（默认 base = HEAD）
+codeatlas affected D:\code\shop-api --base origin/main    # 这个分支相对主干改了什么（审 PR）
+codeatlas affected D:\code\shop-api --base origin/main --quiet | xargs npx vitest run   # CI 只跑相关测试
+git diff -U0 origin/main | codeatlas affected D:\code\shop-api --stdin
+```
+
+- **符号级**：diff 的改动行（新侧行号，对应工作区，也就是索引里的行）映射到包含它的最内层方法 / 函数 / 属性 / 类型；字段算到所属类型上；删掉的行看删除点两边属于谁（删掉整个方法 → 所在的类）。再沿影响范围同一套规则往上走：受影响的入口（HTTP 路由、命令、定时任务……）与测试方法。改类型 / 枚举时还会算上把它当参数、字段类型用的地方。
+- **默认 base = HEAD**：索引反映的是工作区，HEAD 是唯一不用猜分支名就总在的基准。给 `--base` 时取它与 HEAD 的 merge-base（主干后来的提交不算），再与工作区比；未跟踪的新文件按新增算。
+- **退化为文件级**：改动落在任何符号之外（using / import、文件顶部）、新文件、二进制、`--stdin` 喂的是文件名列表时，文件里的符号全算，输出里标「文件级」。
+- **跳过并说明原因**：非源码文件、不在索引里的源码、已删除的文件、只改名、只有空白改动。改动文件在索引之后又改过时提示索引过期（行号可能对不上）。
+- `--stdin` 自动识别统一 diff（建议 `-U0`）与文件名列表（`--name-only` / `--name-status`）；`--depth N` 往上的层数，默认 15（与侧边栏影响范围一致）；`--filter <glob>` 可重复，自定义哪些路径算测试（取代默认的 Tests / test / spec 规则）；`--json` 完整结果；`--quiet` 只打印测试文件（相对仓库根，一行一个）。
+- 每个入口 / 测试带链路置信度（所有路径里最弱一条边最强的那条），低于 0.7 标「推测」。置信度 0.5 以下的边不走（同影响范围）。
+- 没有 git 时报错并提示改用 `--stdin`。只看主仓库：`--project` 外部根和嵌套仓库里的改动不在 git diff 里。
 
 ## 怎么读 confidence
 
@@ -115,7 +175,10 @@ TS 仓库的限定名格式是 `相对路径:类.方法`，比如 `web/src/compo
 | 0.9 | 同一个文件里有且只有一个同名定义 | 很高，但同文件里 `repository.Foo()` 恰好和自己的 `Foo()` 重名时会错 |
 | 0.7 | 在 import / using 范围内有且只有一个同名定义 | 高 |
 | 0.5 | 全仓库有且只有一个同名定义；或者没找到定义、归为外部库（`external:xxx`） | 中 |
+| 0.4（合成） | **合成边**，不是代码里写出来的调用：TS / JS 里 `x.emit('频道')` 所在的函数 → 同名频道 `x.on('频道', handler)`（once / addListener / addEventListener 同理）注册的处理函数，边上 via = `event:频道`。只按频道名配对、不看是不是同一个发射器对象；`data` / `error` / `close` / `click` 等通用事件名、一个频道超过 10 个处理函数或 50 处发出的不配 | 推断，当"运行时大概会走到这里"看；时序图里是紫色虚线、标「事件 频道」 |
 | 0.3 | 有多个候选，分不清是哪个，每个候选各一条边（最多 20 条） | 低，当"可能是这些之一"看 |
+
+回调 / observer 注册（`stream.on('data', onData)`、`useMutation({ mutationFn: login })`：注册函数 → 处理函数，via = `callback`，封顶 0.85）与 JSX 渲染（父组件 → `<Child />`，via = `render`）在解析阶段就有，属于按 import / 名字解析出的边，不在合成边这一档。
 
 0.3 的边是常见的噪声来源。同名方法无法按导入与接收者信息唯一定位时，会列出候选。C# 的 Roslyn 增强器已可用，会用真实类型信息覆盖可解析的边；其他语言和缺 SDK 时仍以启发式结果为主。
 
@@ -157,7 +220,7 @@ npm --prefix extension test
 ```
 src/CodeAtlas.Core                 模型、SQLite 读写、启发式解析器、IEdgeResolver 扩展点
 src/CodeAtlas.Indexing.TreeSitter  适配器底座 + 每语言一对 .scm 查询 + 薄适配器；扫描器；索引器
-src/CodeAtlas.Cli                  index / query / search / arch / serve
+src/CodeAtlas.Cli                  index / query / search / arch / serve / mcp
 src/CodeAtlas.Server               本地 API、项目地图、框架流程与 AI 叙述
 src/CodeAtlas.Indexing.Roslyn       C# 精确分析与独立 worker
 extension/                        VS Code 扩展与 Webview

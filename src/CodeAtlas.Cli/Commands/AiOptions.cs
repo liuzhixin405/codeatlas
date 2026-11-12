@@ -18,7 +18,7 @@ internal static class AiOptions
         var provider = (args.Value("--ai-provider") ?? NarrationOptions.OpenAi).ToLowerInvariant();
         if (!NarrationOptions.Providers.Contains(provider))
         {
-            stderr.WriteLine($"--ai-provider 只能是 {string.Join(" / ", NarrationOptions.Providers)}，不是 {provider}");
+            stderr.WriteLine(L($"--ai-provider 只能是 {string.Join(" / ", NarrationOptions.Providers)}，不是 {provider}", $"--ai-provider must be {string.Join(" / ", NarrationOptions.Providers)}, not {provider}"));
             ok = false;
             provider = NarrationOptions.OpenAi;
         }
@@ -26,7 +26,7 @@ internal static class AiOptions
         var endpoint = args.Value("--ai-endpoint") ?? (anthropic ? NarrationOptions.AnthropicEndpoint : NarrationOptions.DefaultEndpoint);
         if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https"))
         {
-            stderr.WriteLine($"--ai-endpoint 不是合法的 http(s) 地址：{endpoint}");
+            stderr.WriteLine(L($"--ai-endpoint 不是合法的 http(s) 地址：{endpoint}", $"--ai-endpoint is not a valid http(s) address: {endpoint}"));
             ok = false;
         }
         var model = args.Value("--ai-model") ?? (anthropic ? NarrationOptions.AnthropicModel : NarrationOptions.DefaultModel);
@@ -46,7 +46,7 @@ internal static class AiOptions
     {
         if (args.Value(name) is not { } raw) return fallback;
         if (int.TryParse(raw, out var v) && v >= 1 && v <= max) return v;
-        stderr.WriteLine($"{name} 需要 1–{max} 的整数，不是 {raw}");
+        stderr.WriteLine(L($"{name} 需要 1–{max} 的整数，不是 {raw}", $"{name} requires an integer from 1 to {max}, not {raw}"));
         ok = false;
         return fallback;
     }

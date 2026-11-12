@@ -74,19 +74,30 @@ public sealed class RuleContext
 
     public string[] Lines(string rel) => _sources.Lines(rel);
 
-    /// <summary>登记（或取回）一个外部系统节点。key = external:{subkind}:{slug}。</summary>
+    private readonly Dictionary<string, string> _canonicalNames = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// 登记（或取回）一个外部系统节点。key = external:{subkind}:{slug}。
+    /// name 是规范名（中文词表原文 / 主机名 / 包名），key 与去重只按它算，跟输出语言无关；
+    /// 节点上存的显示名按语言经 ExternalNames.Display 翻译。要按"名字"做判断的地方用 CanonicalName(key)，不要读 node.Name。
+    /// </summary>
     public string External(string subKind, string name, Evidence evidence)
     {
         var key = $"external:{subKind}:{Slug(name)}";
+        _canonicalNames.TryAdd(key, name);
         if (Externals.TryGetValue(key, out var existing))
         {
             if (!existing.Evidence.Any(e => e.File == evidence.File && e.Line == evidence.Line))
                 Externals[key] = existing with { Evidence = [.. existing.Evidence, evidence] };
             return key;
         }
-        Externals[key] = new ArchNode(key, ArchNodeKind.External, subKind, name, null, ArchSource.Discovered, [evidence], [], []);
+        Externals[key] = new ArchNode(key, ArchNodeKind.External, subKind, ExternalNames.Display(name), null, ArchSource.Discovered, [evidence], [], []);
         return key;
     }
+
+    /// <summary>外部系统节点的规范名（登记时传进 External 的 name）；不是经 External 登记的节点退回它的 Name。</summary>
+    public string CanonicalName(string key) =>
+        _canonicalNames.TryGetValue(key, out var name) ? name : Externals.TryGetValue(key, out var node) ? node.Name : key;
 
     public static string Slug(string name)
     {

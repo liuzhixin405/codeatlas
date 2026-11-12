@@ -13,7 +13,7 @@ public sealed class AiEndpointRule : IDiscoveryRule
 {
     public const string RuleId = "ai-endpoint";
     public string Id => RuleId;
-    public string Description => "字符串里的大模型接口路径（/chat/completions、/v1/messages）";
+    public string Description => L("字符串里的大模型接口路径（/chat/completions、/v1/messages）", "LLM API paths in string literals (/chat/completions, /v1/messages)");
 
     private const string OpenAiCompatible = "AI 端点（OpenAI 兼容）";
     private const string Anthropic = "Anthropic";

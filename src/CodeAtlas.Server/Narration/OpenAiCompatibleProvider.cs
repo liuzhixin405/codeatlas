@@ -58,19 +58,19 @@ public abstract class HttpChatProvider : IChatProvider, IDisposable
             using var request = BuildRequest(system, user);
             HttpResponseMessage response;
             try { response = await _http.SendAsync(request, timeout.Token); }
-            catch (HttpRequestException ex) { throw new ChatUnavailableException($"连不上 AI 端点 {Options.Endpoint}：{ex.Message}", ex); }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new ChatFailedException($"AI 端点 {Options.TimeoutSeconds}s 内没有响应（超时）"); }
+            catch (HttpRequestException ex) { throw new ChatUnavailableException(L($"连不上 AI 端点 {Options.Endpoint}：{ex.Message}", $"Cannot connect to the AI endpoint {Options.Endpoint}: {ex.Message}"), ex); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new ChatFailedException(L($"AI 端点 {Options.TimeoutSeconds}s 内没有响应（超时）", $"The AI endpoint did not respond within {Options.TimeoutSeconds}s (timeout)")); }
             using (response)
             {
                 string text;
                 try { text = await response.Content.ReadAsStringAsync(timeout.Token); }
-                catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new ChatFailedException($"AI 端点 {Options.TimeoutSeconds}s 内没有读完响应（超时）"); }
+                catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new ChatFailedException(L($"AI 端点 {Options.TimeoutSeconds}s 内没有读完响应（超时）", $"The AI endpoint response was not fully read within {Options.TimeoutSeconds}s (timeout)")); }
                 sw.Stop();
                 var code = (int)response.StatusCode;
                 if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
                     throw new ChatUnavailableException(string.IsNullOrEmpty(Options.ApiKey)
-                        ? $"AI 端点要求 API Key，但没有设置（HTTP {code}）"
-                        : $"API Key 无效或没有权限（HTTP {code}）：{Truncate(text, 200)}");
+                        ? L($"AI 端点要求 API Key，但没有设置（HTTP {code}）", $"The AI endpoint requires an API key, but none is set (HTTP {code})")
+                        : L($"API Key 无效或没有权限（HTTP {code}）：{Truncate(text, 200)}", $"API key is invalid or lacks permission (HTTP {code}): {Truncate(text, 200)}"));
                 if (response.StatusCode == HttpStatusCode.TooManyRequests && attempt < RateLimitAttempts)
                 {
                     await Task.Delay(RetryAfter(response, attempt), ct);
@@ -80,11 +80,11 @@ public abstract class HttpChatProvider : IChatProvider, IDisposable
                 {
                     if (OnBadRequest(response.StatusCode, text)) { attempt--; continue; } // 协议降级后重发，不算一次限流重试
                     throw new ChatFailedException(response.StatusCode == HttpStatusCode.TooManyRequests
-                        ? $"AI 服务限流（HTTP 429），重试 {RateLimitAttempts} 次仍未通过"
-                        : $"AI 端点返回 HTTP {code}：{Truncate(text, 300)}");
+                        ? L($"AI 服务限流（HTTP 429），重试 {RateLimitAttempts} 次仍未通过", $"The AI service is rate limiting (HTTP 429); still failing after {RateLimitAttempts} retries")
+                        : L($"AI 端点返回 HTTP {code}：{Truncate(text, 300)}", $"The AI endpoint returned HTTP {code}: {Truncate(text, 300)}"));
                 }
                 var (content, prompt, completion) = ParseResponse(text);
-                if (string.IsNullOrWhiteSpace(content)) throw new ChatFailedException("AI 端点返回了空内容");
+                if (string.IsNullOrWhiteSpace(content)) throw new ChatFailedException(L("AI 端点返回了空内容", "The AI endpoint returned empty content"));
                 return new ChatResult(content, prompt, completion, sw.Elapsed);
             }
         }
@@ -112,8 +112,8 @@ public abstract class HttpChatProvider : IChatProvider, IDisposable
 
     protected static T Deserialize<T>(string body)
     {
-        try { return JsonSerializer.Deserialize<T>(body, Json) ?? throw new ChatFailedException("AI 端点的响应是空 JSON"); }
-        catch (JsonException ex) { throw new ChatFailedException($"AI 端点的响应不是 JSON：{ex.Message}"); }
+        try { return JsonSerializer.Deserialize<T>(body, Json) ?? throw new ChatFailedException(L("AI 端点的响应是空 JSON", "The AI endpoint response is empty JSON")); }
+        catch (JsonException ex) { throw new ChatFailedException(L($"AI 端点的响应不是 JSON：{ex.Message}", $"The AI endpoint response is not JSON: {ex.Message}")); }
     }
 
     protected static string Truncate(string s, int max) => s.Length <= max ? s : s[..max] + "…";

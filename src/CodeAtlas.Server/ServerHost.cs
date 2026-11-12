@@ -33,7 +33,9 @@ public static class ServerHost
         app.Lifetime.ApplicationStarted.Register(() =>
         {
             var index = app.Services.GetRequiredService<IndexService>();
-            if (index.Health() is { Files: > 0, NeedsRebuild: true }) index.TryStartIndex(full: true);
+            var health = index.Health();
+            if (health is { Files: > 0, NeedsRebuild: true }) index.TryStartIndex(full: true);
+            else if (health.Files > 0) index.TryStartReconcile(); // 服务没跑时磁盘上的改动：对一次账，有差异才排一次增量（见 TryStartReconcile）
         });
         if (!string.IsNullOrEmpty(options.Token))
         {
@@ -49,7 +51,7 @@ public static class ServerHost
                 if (!string.Equals(provided, options.Token, StringComparison.Ordinal))
                 {
                     ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                    await ctx.Response.WriteAsJsonAsync(new { error = "缺少或错误的 X-CodeAtlas-Token" });
+                    await ctx.Response.WriteAsJsonAsync(new { error = L("缺少或错误的 X-CodeAtlas-Token", "Missing or invalid X-CodeAtlas-Token") });
                     return;
                 }
                 await next();
@@ -59,7 +61,7 @@ public static class ServerHost
         app.MapGet("/api/health", (IndexService s) => s.Health());
 
         app.MapPost("/api/index", (IndexService s, IndexRequest? body) =>
-            s.TryStartIndex(body?.Full ?? false, body?.Roslyn) ? Results.Accepted("/api/index/status") : Results.Conflict(new { error = "索引正在进行中" }));
+            s.TryStartIndex(body?.Full ?? false, body?.Roslyn) ? Results.Accepted("/api/index/status") : Results.Conflict(new { error = L("索引正在进行中", "Indexing is already in progress") }));
 
         app.MapGet("/api/index/status", (IndexService s) => s.Status());
 
@@ -71,18 +73,18 @@ public static class ServerHost
 
         // 框架流程：中间件 → 控制器 → 分派器 → 行为链 → Handler → 收尾（替换旧的 /api/pipeline）
         app.MapGet("/api/arch/framework", (IndexService s, string container) =>
-            s.Framework(container) is { } framework ? Results.Ok(framework) : Results.NotFound(new { error = $"没有这个容器：{container}" }));
+            s.Framework(container) is { } framework ? Results.Ok(framework) : Results.NotFound(new { error = L($"没有这个容器：{container}", $"No such container: {container}") }));
 
         app.MapGet("/api/arch/containers", (IndexService s) => s.Architecture());
 
         app.MapGet("/api/arch/dsm", (IndexService s, string container, string? root) =>
-            s.Dsm(container, root ?? "") is { } dsm ? Results.Ok(dsm) : Results.NotFound(new { error = $"没有这个容器：{container}" }));
+            s.Dsm(container, root ?? "") is { } dsm ? Results.Ok(dsm) : Results.NotFound(new { error = L($"没有这个容器：{container}", $"No such container: {container}") }));
 
         app.MapGet("/api/arch/entries", (IndexService s, string container, string? kind, string? q) => s.Entries(container, kind, q));
 
         // 同一个方法上挂着几条路由（lambda 体里没有单一调用时留在外层方法上）：route / method 选其中一条，流程只取那条路由的那段
         app.MapGet("/api/arch/flow", (IndexService s, long entry, int? depth, string? route, string? method) =>
-            s.Flow(entry, depth, route, method) is { } flow ? Results.Ok(flow) : Results.NotFound(new { error = $"没有这个入口：{entry}" }));
+            s.Flow(entry, depth, route, method) is { } flow ? Results.Ok(flow) : Results.NotFound(new { error = L($"没有这个入口：{entry}", $"No such entry: {entry}") }));
 
         // 本地 AI 叙述：读（没有缓存时自动排队）/ 触发 / 队列状态 / 停 / 续
         app.MapGet("/api/arch/narrative", (Narration.NarrationService n, string kind, string key) =>
@@ -90,7 +92,7 @@ public static class ServerHost
 
         app.MapPost("/api/arch/narrate", (Narration.NarrationService n, NarrateRequest? body) =>
         {
-            if (body is null || string.IsNullOrEmpty(body.Key)) return Results.BadRequest(new { error = "需要 body {kind, key, force?}" });
+            if (body is null || string.IsNullOrEmpty(body.Key)) return Results.BadRequest(new { error = L("需要 body {kind, key, force?}", "Body {kind, key, force?} is required") });
             if (!Narration.NarrativePresets.IsValidKind(body.Kind)) return BadKind(body.Kind);
             var dto = n.Enqueue(body.Kind, body.Key, body.Force ?? false);
             return Results.Accepted($"/api/arch/narrative?kind={Uri.EscapeDataString(body.Kind)}&key={Uri.EscapeDataString(body.Key)}", dto);
@@ -113,13 +115,24 @@ public static class ServerHost
 
         // 从任意方法出发的时序图（面板"调用图"的默认视图）：入口与 /api/arch/flow 相同；类型 / 字段等不可执行的给只有根的流程，note 说明
         app.MapGet("/api/symbols/{id:long}/flow", (IndexService s, long id, int? depth) =>
-            s.SymbolFlow(id, depth) is { } flow ? Results.Ok(flow) : Results.NotFound(new { error = $"没有这个符号：{id}" }));
+            s.SymbolFlow(id, depth) is { } flow ? Results.Ok(flow) : Results.NotFound(new { error = L($"没有这个符号：{id}", $"No such symbol: {id}") }));
+
+        // 两点间调用路径：id → to，depth = 最多几步（默认 8，上限 12），max = 最多几条（默认 10，上限 50）
+        app.MapGet("/api/symbols/{id:long}/paths", (IndexService s, long id, long to, int? depth, int? max) =>
+            s.CallPaths(id, to, depth, max) is { } paths ? Results.Ok(paths) : Results.NotFound(new { error = L($"没有这个符号：{id} 或 {to}", $"No such symbol: {id} or {to}") }));
 
         app.MapGet("/api/symbols/{id:long}/relations", (IndexService s, long id, int? depth, bool? tests) =>
             s.Relations(id, new RelationsOptions(depth ?? 1, tests ?? false)) is { } relations ? Results.Ok(relations) : Results.NotFound());
 
         app.MapGet("/api/symbols/{id:long}/impact", (IndexService s, long id, bool? entries, bool? tests) =>
             s.Impact(id, new ImpactOptions(entries ?? true, tests ?? false)) is { } impact ? Results.Ok(impact) : Results.NotFound());
+        // 改动影响分析：base（默认 HEAD）的 merge-base → 工作区的 git diff → 改动的符号 → 受影响的入口与测试；git 出错 400 { error }
+        app.MapGet("/api/affected", (IndexService s, string? @base, int? depth) =>
+            s.Affected(@base, new AffectedOptions(depth ?? AffectedQuery.DefaultDepth)) switch
+            {
+                { Result: { } r } => Results.Ok(r),
+                var failed => Results.BadRequest(new { error = failed.Error }),
+            });
 
         app.MapGet("/api/symbols/{id:long}/neighbors", (IndexService s, long id, string? direction, string? kinds) =>
         {
@@ -131,7 +144,7 @@ public static class ServerHost
                 foreach (var k in kinds.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
                 {
                     if (!DbNames.TryParseEdgeKind(k, out var kind))
-                        return Results.BadRequest(new { error = $"未知的边类型：{k}", valid = DbNames.EdgeKindNames });
+                        return Results.BadRequest(new { error = L($"未知的边类型：{k}", $"Unknown edge kind: {k}"), valid = DbNames.EdgeKindNames });
                     kindSet.Add(kind);
                 }
             }
@@ -142,7 +155,7 @@ public static class ServerHost
     }
 
     private static IResult BadKind(string? kind) =>
-        Results.BadRequest(new { error = $"未知的叙述对象类型：{kind}", valid = Narration.NarrativePresets.Kinds });
+        Results.BadRequest(new { error = L($"未知的叙述对象类型：{kind}", $"Unknown narration object kind: {kind}"), valid = Narration.NarrativePresets.Kinds });
 
     /// <summary>启动、向 stdout 打印 {"port":N}、运行看门狗、等待停止。</summary>
     public static async Task RunAsync(ServerOptions options, TextWriter stdout, CancellationToken ct)

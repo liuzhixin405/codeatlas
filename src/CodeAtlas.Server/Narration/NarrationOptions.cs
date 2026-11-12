@@ -47,13 +47,13 @@ public sealed record NarrationOptions(string Endpoint, string Model, bool Enable
         get
         {
             if (!Uri.TryCreate(Endpoint, UriKind.Absolute, out var uri) || uri.IsLoopback) return null;
-            return IncludeSource ? $"事实子图与入口源码将发送到 {uri.Host}" : $"事实子图将发送到 {uri.Host}";
+            return IncludeSource ? L($"事实子图与入口源码将发送到 {uri.Host}", $"The facts subgraph and entry source code will be sent to {uri.Host}") : L($"事实子图将发送到 {uri.Host}", $"The facts subgraph will be sent to {uri.Host}");
         }
     }
 
     private bool PrintMembers(StringBuilder builder)
     {
-        builder.Append($"Provider = {Provider}, Endpoint = {Endpoint}, Model = {Model}, Enabled = {Enabled}, TimeoutSeconds = {TimeoutSeconds}, Concurrency = {Concurrency}, IncludeSource = {IncludeSource}, ApiKey = {(string.IsNullOrEmpty(ApiKey) ? "无" : "***")}");
+        builder.Append($"Provider = {Provider}, Endpoint = {Endpoint}, Model = {Model}, Enabled = {Enabled}, TimeoutSeconds = {TimeoutSeconds}, Concurrency = {Concurrency}, IncludeSource = {IncludeSource}, ApiKey = {(string.IsNullOrEmpty(ApiKey) ? L("无", "none") : "***")}");
         return true;
     }
 }

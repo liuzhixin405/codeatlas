@@ -119,12 +119,12 @@ public static partial class FlowBuilder
         if (segments.Length == 0) return null;
         var types = segments.Length > 1 ? segments[..^1] : segments;
         if (types.Any(s => PersistenceSegments.Contains(s) || (s.Length > "Repository".Length && s.EndsWith("Repository", StringComparison.Ordinal)))
-            || (segments.Length > 1 && PersistenceMembers.Contains(segments[^1]))) return "数据库";
+            || (segments.Length > 1 && PersistenceMembers.Contains(segments[^1]))) return L("数据库", "Database");
         if (types.Any(HttpSegments.Contains)) return "HTTP";
-        if (types.Any(MessagingSegments.Contains)) return "消息";
-        if (types.Any(CloudSegments.Contains)) return "云服务";
-        if (types.Any(s => s is "Process" or "ProcessStartInfo" or "subprocess" or "child_process" or "ProcessBuilder")) return "外部进程";
-        if (types.Any(FileSegments.Contains) && segments[^1] is not ("Exists" or "existsSync")) return "文件"; // File.Exists 只是探一下，不算读写
+        if (types.Any(MessagingSegments.Contains)) return L("消息", "Messaging");
+        if (types.Any(CloudSegments.Contains)) return L("云服务", "Cloud service");
+        if (types.Any(s => s is "Process" or "ProcessStartInfo" or "subprocess" or "child_process" or "ProcessBuilder")) return L("外部进程", "External process");
+        if (types.Any(FileSegments.Contains) && segments[^1] is not ("Exists" or "existsSync")) return L("文件", "File"); // File.Exists 只是探一下，不算读写
         return null;
     }
 }

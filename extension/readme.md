@@ -11,13 +11,12 @@
 
 [完整指南](https://github.com/liuzhixin405/CodeAtlas/blob/main/docs/vscode-extension-guide.md) · [发布指南](https://github.com/liuzhixin405/CodeAtlas/blob/main/docs/vscode-extension-publishing.md)
 
-## 0.1.1 更新
+## 0.2.0 更新
 
-- 调用图默认使用按调用顺序和项目分列的时序图，可切回网状图；增加框架流程和跨视图后退 / 前进。
-- 索引格式升级到 **12**，旧索引会自动全量重建。原始引用持久化与事务提交，增量重新绑定未修改调用方，避免解析失败留下部分索引。
-- C# 有待更新文件时自动补算 Roslyn；保存与手动索引统一排队，全量需求优先。
-- 搜索、焦点、展开与 DSM 等视图隔离过期异步响应，索引后刷新当前视图；后处理根据输入指纹和 Git ref 复用结果。
-- 恢复已发布品牌与图标，并保留 SQLite / Roslyn 安全依赖更新。
+- 界面语言跟随 VS Code 显示语言：中文环境显示中文，其他语言显示英文（命令、侧边栏、面板、框架流程、项目地图、AI 叙述都包括在内）。
+- 升级后不用做任何操作；想让所有文字马上换成当前语言，运行一次“索引工作区（全量重建）”。
+
+每个版本改了什么、升级后要做什么，见 [更新日志](CHANGELOG.md)。
 
 ## 安装
 
@@ -26,7 +25,7 @@
 在扩展市场搜索 **CodeTrail Graph**，或运行 `code --install-extension 164910441.codetrail-graph`。以下是 Windows x64 离线包安装示例：
 
 ```bash
-code --install-extension codetrail-graph-win32-x64-0.1.1.vsix --force
+code --install-extension codetrail-graph-win32-x64-0.2.0.vsix --force
 ```
 
 装完**完全退出并重新打开 VS Code**。更新时也必须先完全退出，否则服务文件被占用，安装会报 `EPERM`。

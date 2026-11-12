@@ -11,7 +11,13 @@ public sealed record ArchReport(int Containers, int Externals, int Edges, int Ou
 /// <summary>容器图的事实层：清单 → 容器 → 规则 → 匹配 → 声明合并 →（可选）写库。</summary>
 public static class ArchitectureScanner
 {
-    public static IReadOnlyList<IDiscoveryRule> DefaultRules { get; } =
+    /// <summary>
+    /// 每次取都新建一批规则实例：规则在 Apply 里会读写自己的诊断 / 缓存字段（Servers、_httpModules…），
+    /// 共享同一批实例时并行扫描（测试并行、Server 同时建两个视图）会互相污染，导致边多出来或漏掉。
+    /// </summary>
+    public static IReadOnlyList<IDiscoveryRule> DefaultRules => CreateRules();
+
+    private static IDiscoveryRule[] CreateRules() =>
     [
         new PackageReferenceRule(),
         new LocalAssemblyRule(),

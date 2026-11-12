@@ -120,7 +120,7 @@ public abstract class LanguageAdapterBase : ILanguageAdapter, IDisposable
     public ParsedFile Parse(string relativePath, string source)
     {
         using var parser = new Parser(_language);
-        using var tree = parser.Parse(source) ?? throw new InvalidOperationException($"tree-sitter 未能解析 {relativePath}");
+        using var tree = parser.Parse(source) ?? throw new InvalidOperationException(L($"tree-sitter 未能解析 {relativePath}", $"tree-sitter failed to parse {relativePath}"));
         var root = tree.RootNode;
 
         var symbols = new List<ParsedSymbol>();

@@ -11,7 +11,7 @@ public sealed class IdentityProviderRule : IDiscoveryRule
 {
     public const string RuleId = "identity-provider";
     public string Id => RuleId;
-    public string Description => "AddJwtBearer / AddOpenIdConnect 的 Authority（身份提供方：Keycloak、IdentityServer、Auth0…）";
+    public string Description => L("AddJwtBearer / AddOpenIdConnect 的 Authority（身份提供方：Keycloak、IdentityServer、Auth0…）", "Authority of AddJwtBearer / AddOpenIdConnect (identity providers: Keycloak, IdentityServer, Auth0…)");
 
     private static readonly Regex Authority = new(@"\bAuthority\s*=\s*([^;,]+?)\s*[;,]?\s*$", RegexOptions.Compiled);
     private static readonly Regex AuthContext = new(@"\bAdd(?:JwtBearer|OpenIdConnect|IdentityServerAuthentication|MicrosoftIdentityWebApi)\b|\b(?:JwtBearerOptions|OpenIdConnectOptions)\b", RegexOptions.Compiled);

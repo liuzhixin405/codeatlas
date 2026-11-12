@@ -194,7 +194,7 @@ public static class ArchRuleParser
             if (fromPattern == ArchRule.Any) { fromPattern = pattern; fromMatch = match; return; }
             // 已有前缀范围时，更具体的前缀覆盖；contains 这种拼不进单个模式的只注明
             if (match == ArchRuleMatch.Prefix && fromMatch == ArchRuleMatch.Prefix && pattern.StartsWith(fromPattern, StringComparison.Ordinal)) { fromPattern = pattern; return; }
-            notes.Add($"主语另限 {match} {pattern}");
+            notes.Add(L($"主语另限 {match} {pattern}", $"subject also limited to {match} {pattern}"));
         }
 
         for (var idx = 0; idx < calls.Count; idx++)
@@ -208,19 +208,19 @@ public static class ArchRuleParser
                     var typeName = TypeOfName(c.Args);
                     var root = typeName is null ? null : resolver?.AssemblyRootOf(typeName);
                     root ??= GuessAssemblyFromUsings(constants, usings);
-                    if (root is null) notes.Add($"InAssembly({c.Args}) 的程序集无法解析，按全部类型");
+                    if (root is null) notes.Add(L($"InAssembly({c.Args}) 的程序集无法解析，按全部类型", $"assembly of InAssembly({c.Args}) not resolved; treated as all types"));
                     else fromPattern = root;
                     break;
                 }
                 case "InNamespace":
                 {
                     var ns = args.Count > 0 ? Resolve(args[0]) : null;
-                    if (ns is null) notes.Add($"InNamespace({c.Args}) 无法解析，按全部类型");
+                    if (ns is null) notes.Add(L($"InNamespace({c.Args}) 无法解析，按全部类型", $"InNamespace({c.Args}) not resolved; treated as all types"));
                     else { fromPattern = ns; fromMatch = ArchRuleMatch.Prefix; }
                     break;
                 }
                 case "InCurrentDomain" or "InAssemblies":
-                    notes.Add($"{c.Name} 按全部类型");
+                    notes.Add(L($"{c.Name} 按全部类型", $"{c.Name} treated as all types"));
                     break;
                 case "That" or "And" or "Or" or "GetResult":
                     break;
@@ -245,20 +245,20 @@ public static class ArchRuleParser
                 {
                     var t = TypeOfName(c.Args);
                     if (t is null) break;
-                    if (not) notes.Add($"排除实现 {t} 的类型"); else interfaces.Add(t);
+                    if (not) notes.Add(L($"排除实现 {t} 的类型", $"excludes types implementing {t}")); else interfaces.Add(t);
                     break;
                 }
                 case "ResideInNamespace" or "ResideInNamespaceStartingWith" or "ResideInNamespaceContaining" or "ResideInNamespaceEndingWith" or "ResideInNamespaceMatching":
                 {
                     var v = args.Count > 0 ? Resolve(args[0]) : null;
                     if (v is null) break;
-                    if (not) { notes.Add($"排除命名空间 {v}"); break; }
+                    if (not) { notes.Add(L($"排除命名空间 {v}", $"excludes namespace {v}")); break; }
                     Narrow(v, name is "ResideInNamespace" or "ResideInNamespaceStartingWith" ? ArchRuleMatch.Prefix : ArchRuleMatch.Contains);
                     break;
                 }
                 default:
                     // HaveNameEndingWith / AreClasses / Inherit… 这类过滤只注明：命名空间粒度的 DSM 表达不了
-                    notes.Add($"主语另限 {c.Name}");
+                    notes.Add(L($"主语另限 {c.Name}", $"subject also limited by {c.Name}"));
                     break;
             }
         }
@@ -298,9 +298,9 @@ public static class ArchRuleParser
         string Source()
         {
             var parts = new List<string>();
-            if (interfaces.Count > 0) parts.Add("主语限于实现 " + string.Join(" / ", interfaces) + " 的类型");
+            if (interfaces.Count > 0) parts.Add(L("主语限于实现 " + string.Join(" / ", interfaces) + " 的类型", "subject limited to types implementing " + string.Join(" / ", interfaces)));
             parts.AddRange(notes.Distinct());
-            return parts.Count == 0 ? "netarchtest" : $"netarchtest（{string.Join("；", parts)}）";
+            return parts.Count == 0 ? "netarchtest" : L($"netarchtest（{string.Join("；", parts)}）", $"netarchtest ({string.Join("; ", parts)})");
         }
     }
 
@@ -316,7 +316,7 @@ public static class ArchRuleParser
         if (t is not null && arg.EndsWith(".Namespace", StringComparison.Ordinal))
         {
             var ns = resolver?.NamespaceOf(t);
-            if (ns is null) note = $"typeof({t}).Namespace 无法解析";
+            if (ns is null) note = L($"typeof({t}).Namespace 无法解析", $"typeof({t}).Namespace not resolved");
             return ns;
         }
         if (arg.Contains("nameof(", StringComparison.Ordinal))
@@ -324,7 +324,7 @@ public static class ArchRuleParser
             var inner = arg[(arg.IndexOf('(') + 1)..arg.LastIndexOf(')')].Trim();
             return inner.Contains('.') ? inner[(inner.LastIndexOf('.') + 1)..] : inner;
         }
-        note = $"参数 {arg} 无法解析";
+        note = L($"参数 {arg} 无法解析", $"argument {arg} not resolved");
         return null;
     }
 

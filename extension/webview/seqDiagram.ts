@@ -1,5 +1,6 @@
+import { L } from "./l10n";
 import { isPlaceholder, placeholderText } from "./frameworkModel";
-import { layoutFlow, toggle, type FlowPreset, type FlowRow } from "./flowLayout";
+import { layoutFlow, toggle, type FlowLayout, type FlowPreset, type FlowRow } from "./flowLayout";
 import type { FlowActorDto, FlowDto, FlowNodeDto } from "./types";
 
 /**
@@ -23,11 +24,13 @@ export interface SequenceDiagramOptions {
   onNodeLink?(node: FlowNodeDto): void;
   /** 列标题文字；默认用 actor.label（框架流程：阶段名，顺序未知时带说明）。 */
   actorLabel?(actor: FlowActorDto): string;
+  /** 深度小于它的节点默认展开；省略用 DefaultCollapseDepth（两点间路径传 Infinity）。 */
+  collapseDepth?: number;
 }
 
 /** 列标题的悬停说明里 actor 种类的中文。 */
 export function actorKindText(kind: string): string {
-  return kind === "container" ? "容器" : kind === "external" ? "外部" : kind === "stage" ? "阶段" : "项目";
+  return kind === "container" ? L("容器", "Container") : kind === "external" ? L("外部", "External") : kind === "stage" ? L("阶段", "Stage") : L("项目", "Project");
 }
 
 /**
@@ -36,7 +39,7 @@ export function actorKindText(kind: string): string {
  */
 export function rowText(row: Pick<FlowRow, "node" | "label">): string {
   const node = row.node;
-  if (node.kind === "more") return `还有 ${node.count} 个`;
+  if (node.kind === "more") return L(`还有 ${node.count} 个`, `${node.count} more`);
   if (isPlaceholder(node)) return placeholderText(node);
   return row.label;
 }
@@ -73,6 +76,11 @@ export class SequenceDiagram {
     this.draw();
   }
 
+  /** 当前画出来的版式（展开状态、预设都算进去）；导出图片按它重画。没有图为 null。 */
+  layout(): FlowLayout | null {
+    return this.current ? layoutFlow(this.current, this.expanded, this.preset, this.opts.collapseDepth) : null;
+  }
+
   /** 切换版式预设；已有图时立刻重画，展开状态保留。 */
   setPreset(preset: FlowPreset | string): void {
     if (this.preset === preset) return;
@@ -83,7 +91,7 @@ export class SequenceDiagram {
   private draw(): void {
     const dto = this.current;
     if (!dto) return;
-    const layout = layoutFlow(dto, this.expanded, this.preset);
+    const layout = layoutFlow(dto, this.expanded, this.preset, this.opts.collapseDepth);
     const n = Math.max(1, layout.columns.length);
     this.el.innerHTML = "";
     this.el.appendChild(this.opts.header(dto));
@@ -98,7 +106,7 @@ export class SequenceDiagram {
       const cell = document.createElement("div");
       cell.className = `flow-actor ${a.kind}`;
       const label = this.opts.actorLabel?.(a) ?? a.label;
-      cell.title = `${label}（${actorKindText(a.kind)}）`;
+      cell.title = L(`${label}（${actorKindText(a.kind)}）`, `${label} (${actorKindText(a.kind)})`);
       cell.innerHTML = `<span>${esc(label)}</span>`;
       actors.appendChild(cell);
     }
@@ -132,14 +140,14 @@ export class SequenceDiagram {
     if (row.direction === "self") el.style.paddingLeft = node.kind === "entry" ? "0" : "50%";
     else el.style.padding = `0 calc(50% / ${span})`;
     const isHttp = node.kind === "http";
-    el.title = [node.qualifiedName, isHttp && node.note ? node.note : "", node.via ? `via ${node.via}` : "", node.confidence < 1 ? `confidence ${node.confidence.toFixed(1)}` : "", row.collapsed ? `${node.children.length} 个孩子已折起` : "", node.hidden > 0 ? `还有 ${node.hidden} 个没下发` : ""].filter(Boolean).join("\n");
+    el.title = [node.qualifiedName, isHttp && node.note ? node.note : "", node.via ? `via ${node.via}` : "", node.confidence < 1 ? `confidence ${node.confidence.toFixed(1)}` : "", row.collapsed ? L(`${node.children.length} 个孩子已折起`, `${node.children.length} ${node.children.length === 1 ? "child" : "children"} collapsed`) : "", node.hidden > 0 ? L(`还有 ${node.hidden} 个没下发`, `${node.hidden} more not loaded`) : ""].filter(Boolean).join("\n");
 
     const label = document.createElement("span");
     label.className = "flow-label";
     const text = rowText(row);
-    label.innerHTML = (row.hasChildren ? `<span class="caret" title="${row.collapsed ? "展开" : "折叠"}">${row.collapsed ? "▸" : "▾"}</span>` : "") +
+    label.innerHTML = (row.hasChildren ? `<span class="caret" title="${row.collapsed ? L("展开", "Expand") : L("折叠", "Collapse")}">${row.collapsed ? "▸" : "▾"}</span>` : "") +
       // 没对上后端的接口调用：标签前一个「接口」小标记，行尾灰字说明原因
-      (isHttp ? `<span class="api-tag">接口</span>` : "") +
+      (isHttp ? `<span class="api-tag">${L("接口", "API")}</span>` : "") +
       `<span class="text">${esc(text)}</span>` +
       (node.via && node.kind === "hop" ? `<span class="via">${esc(node.via)}</span>` : "") +
       (row.via ? `<span class="via">${esc(row.via.tag)}</span>` : "") +

@@ -43,20 +43,20 @@ public static class SymbolFlow
             var best = ctors.Where(c => outCount.ContainsKey(c.Id)).OrderByDescending(c => outCount[c.Id]).ThenBy(c => c.StartLine).FirstOrDefault();
             if (best is null)
                 return Leaf(symbol, ctors.Count == 0
-                    ? $"{symbol.Name} 是类型，没有显式构造函数，没有可展开的调用；在它的方法上打开时序图"
-                    : $"{symbol.Name} 的构造函数里没有调用；在它的方法上打开时序图");
-            if (allEntries.FirstOrDefault(e => e.SymbolId == best.Id) is { } ctorEntry) return Run(ctorEntry, containers, maxDepth) with { Note = $"从 {symbol.Name} 的构造函数展开" };
+                    ? L($"{symbol.Name} 是类型，没有显式构造函数，没有可展开的调用；在它的方法上打开时序图", $"{symbol.Name} is a type without an explicit constructor, so there are no calls to expand; open the sequence diagram on one of its methods")
+                    : L($"{symbol.Name} 的构造函数里没有调用；在它的方法上打开时序图", $"The constructor of {symbol.Name} makes no calls; open the sequence diagram on one of its methods"));
+            if (allEntries.FirstOrDefault(e => e.SymbolId == best.Id) is { } ctorEntry) return Run(ctorEntry, containers, maxDepth) with { Note = L($"从 {symbol.Name} 的构造函数展开", $"Expanded from the constructor of {symbol.Name}") };
             root = best;
-            note = ctors.Count > 1 ? $"{symbol.Name} 有 {ctors.Count} 个构造函数，展开的是调用最多的那个（第 {best.StartLine} 行）" : $"从 {symbol.Name} 的构造函数展开";
+            note = ctors.Count > 1 ? L($"{symbol.Name} 有 {ctors.Count} 个构造函数，展开的是调用最多的那个（第 {best.StartLine} 行）", $"{symbol.Name} has {ctors.Count} constructors; expanding the one with the most calls (line {best.StartLine})") : L($"从 {symbol.Name} 的构造函数展开", $"Expanded from the constructor of {symbol.Name}");
         }
         else if (!(symbol.Kind is SymbolKind.Method or SymbolKind.Function or SymbolKind.Module
                    || (symbol.Kind is SymbolKind.Property or SymbolKind.Field or SymbolKind.Variable && hasOut)))
         {
             return Leaf(symbol, symbol.Kind switch
             {
-                SymbolKind.External => $"{symbol.Name} 是框架 / 第三方符号，索引里没有它的实现",
-                SymbolKind.Property or SymbolKind.Field or SymbolKind.Variable => $"{symbol.Name} 是{KindText(symbol.Kind)}，没有调用可展开",
-                _ => $"{symbol.Name} 是{KindText(symbol.Kind)}，不是可执行的方法；在方法上打开时序图",
+                SymbolKind.External => L($"{symbol.Name} 是框架 / 第三方符号，索引里没有它的实现", $"{symbol.Name} is a framework / third-party symbol; its implementation is not in the index"),
+                SymbolKind.Property or SymbolKind.Field or SymbolKind.Variable => L($"{symbol.Name} 是{KindText(symbol.Kind)}，没有调用可展开", $"{symbol.Name} is {KindTextEn(symbol.Kind)}; there are no calls to expand"),
+                _ => L($"{symbol.Name} 是{KindText(symbol.Kind)}，不是可执行的方法；在方法上打开时序图", $"{symbol.Name} is {KindTextEn(symbol.Kind)}, not an executable method; open the sequence diagram on a method"),
             });
         }
 
@@ -112,5 +112,12 @@ public static class SymbolFlow
     {
         SymbolKind.Namespace => "命名空间", SymbolKind.Interface => "接口", SymbolKind.Enum => "枚举", SymbolKind.TypeAlias => "类型别名",
         SymbolKind.Property => "属性", SymbolKind.Field => "字段", SymbolKind.Variable => "变量", _ => DbNames.ToDb(k),
+    };
+
+    /// <summary>英文界面用的种类名（带冠词）。</summary>
+    private static string KindTextEn(SymbolKind k) => k switch
+    {
+        SymbolKind.Namespace => "a namespace", SymbolKind.Interface => "an interface", SymbolKind.Enum => "an enum", SymbolKind.TypeAlias => "a type alias",
+        SymbolKind.Property => "a property", SymbolKind.Field => "a field", SymbolKind.Variable => "a variable", _ => "a " + DbNames.ToDb(k),
     };
 }

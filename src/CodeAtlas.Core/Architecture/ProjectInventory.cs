@@ -204,7 +204,7 @@ public sealed partial class ProjectInventory
         var name = System.IO.Path.GetFileNameWithoutExtension(relFile);
         XDocument doc;
         try { doc = XDocument.Load(full, LoadOptions.SetLineInfo); }
-        catch (XmlException) { return new CsProject(dir, relFile, name, null, null, false, [], [], [], [], [new Evidence(relFile, null, "csproj 解析失败")], null); }
+        catch (XmlException) { return new CsProject(dir, relFile, name, null, null, false, [], [], [], [], [new Evidence(relFile, null, L("csproj 解析失败", "failed to parse csproj"))], null); }
         var ns = doc.Root?.Name.Namespace ?? XNamespace.None;
         var sdk = doc.Root?.Attribute("Sdk")?.Value;
         var outputType = doc.Descendants(ns + "OutputType").Select(e => e.Value.Trim()).FirstOrDefault();

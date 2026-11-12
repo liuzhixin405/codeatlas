@@ -24,23 +24,23 @@ internal static class RelationsPrinter
     internal static void Print(RelationsDto rel, RelationsOptions options, TextWriter stdout)
     {
         var label = rel.Nodes.ToDictionary(n => n.Unit.Id, n => Short(n.Unit));
-        stdout.WriteLine($"中心：{rel.Focus.QualifiedName}  [{rel.Focus.Kind}]  {rel.Focus.Path}:{rel.Focus.StartLine}");
-        stdout.WriteLine($"depth {options.Depth}：{rel.Nodes.Count} 个单元、{rel.Edges.Count} 条边{(rel.Truncated ? $"（超过 {RelationsBuilder.MaxNodes} 个单元，按权重截断）" : "")}");
+        stdout.WriteLine(L($"中心：{rel.Focus.QualifiedName}  [{rel.Focus.Kind}]  {rel.Focus.Path}:{rel.Focus.StartLine}", $"Focus: {rel.Focus.QualifiedName}  [{rel.Focus.Kind}]  {rel.Focus.Path}:{rel.Focus.StartLine}"));
+        stdout.WriteLine(L($"depth {options.Depth}：{rel.Nodes.Count} 个单元、{rel.Edges.Count} 条边{(rel.Truncated ? $"（超过 {RelationsBuilder.MaxNodes} 个单元，按权重截断）" : "")}", $"depth {options.Depth}: {Plural(rel.Nodes.Count, "unit", "units")}, {Plural(rel.Edges.Count, "edge", "edges")}{(rel.Truncated ? $" (more than {RelationsBuilder.MaxNodes} units, truncated by weight)" : "")}"));
 
-        stdout.WriteLine("组件（依赖序，被依赖的在前）：");
+        stdout.WriteLine(L("组件（依赖序，被依赖的在前）：", "Components (dependency order, dependencies first):"));
         foreach (var c in rel.Components.OrderBy(c => c.Order))
         {
-            var detail = c.Key == RelationsBuilder.ExternalComponentKey ? "" : $"  {c.Key}" + (c.ContainerKey is null ? "" : $"  [容器 {c.ContainerKey}]");
+            var detail = c.Key == RelationsBuilder.ExternalComponentKey ? "" : $"  {c.Key}" + (c.ContainerKey is null ? "" : L($"  [容器 {c.ContainerKey}]", $"  [container {c.ContainerKey}]"));
             stdout.WriteLine($"  {c.Order + 1}. {c.Label}{detail}");
             foreach (var n in rel.Nodes.Where(n => n.ComponentKey == c.Key))
                 stdout.WriteLine($"       {(n.Distance == 0 ? "*" : " ")} {label[n.Unit.Id]}  [{n.Unit.Kind}]  d{n.Distance}");
         }
 
-        stdout.WriteLine("边：");
+        stdout.WriteLine(L("边：", "Edges:"));
         foreach (var e in rel.Edges)
         {
             var kinds = string.Join(" · ", e.Kinds.Select(k => $"{k.Key} {k.Value}"));
-            stdout.WriteLine($"  {label[e.From]} → {label[e.To]}  {kinds}  （权重 {e.Weight:0.#}）");
+            stdout.WriteLine(L($"  {label[e.From]} → {label[e.To]}  {kinds}  （权重 {e.Weight:0.#}）", $"  {label[e.From]} → {label[e.To]}  {kinds}  (weight {e.Weight:0.#})"));
             foreach (var s in e.Samples)
                 stdout.WriteLine($"      {s.FromLabel} → {s.ToLabel}  {s.Kind}  {s.File}:{s.Line}{(s.Confidence < 1 ? $"  {s.Confidence:0.##}" : "")}");
         }

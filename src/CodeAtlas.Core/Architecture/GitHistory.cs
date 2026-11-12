@@ -218,21 +218,36 @@ public static class GitHistory
     public static List<string> FindNestedRepos(string root) =>
         ProjectRoots.Single(root).Repositories().Where(r => r.IsNested).Select(r => r.Prefix.TrimEnd('/')).ToList();
 
-    private static (string Output, string? Error) RunGit(string dir, string args, TimeSpan timeout, int[]? okExitCodes = null)
+    private static (string Output, string? Error) RunGit(string dir, string args, TimeSpan timeout, int[]? okExitCodes = null) =>
+        Execute(new ProcessStartInfo("git", args), dir, args.Split(' ')[0], timeout, okExitCodes);
+
+    /// <summary>
+    /// 在 dir 里跑一次 git（参数逐个传，不经 shell 拆分，ref 名里有空格或以 - 开头也不会变成别的选项）。
+    /// 返回 (标准输出, 错误)；git 不存在、超时、退出码不在 okExitCodes（默认只认 0）里时 Error 非空，文案已按语言。影响分析（affected）复用。
+    /// </summary>
+    public static (string Output, string? Error) Git(string dir, IReadOnlyList<string> args, TimeSpan timeout, int[]? okExitCodes = null)
+    {
+        var psi = new ProcessStartInfo("git");
+        foreach (var a in args) psi.ArgumentList.Add(a);
+        return Execute(psi, dir, args.FirstOrDefault(a => !a.StartsWith('-') && !a.Contains('=')) ?? "", timeout, okExitCodes);
+    }
+
+    private static (string Output, string? Error) Execute(ProcessStartInfo psi, string dir, string verb, TimeSpan timeout, int[]? okExitCodes)
     {
         try
         {
-            var psi = new ProcessStartInfo("git", args) { WorkingDirectory = dir, RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true, StandardOutputEncoding = System.Text.Encoding.UTF8 };
+            psi.WorkingDirectory = dir; psi.RedirectStandardOutput = true; psi.RedirectStandardError = true; psi.UseShellExecute = false; psi.CreateNoWindow = true;
+            psi.StandardOutputEncoding = System.Text.Encoding.UTF8;
             using var p = Process.Start(psi);
-            if (p is null) return ("", "无法启动 git");
+            if (p is null) return ("", L("无法启动 git", "failed to start git"));
             var outTask = p.StandardOutput.ReadToEndAsync();
             var errTask = p.StandardError.ReadToEndAsync();
-            if (!p.WaitForExit((int)timeout.TotalMilliseconds)) { try { p.Kill(true); } catch { } return ("", $"git {args.Split(' ')[0]} 超时"); }
+            if (!p.WaitForExit((int)timeout.TotalMilliseconds)) { try { p.Kill(true); } catch { } return ("", L($"git {verb} 超时", $"git {verb} timed out")); }
             var output = outTask.GetAwaiter().GetResult();
             var err = errTask.GetAwaiter().GetResult();
-            if (!(okExitCodes ?? [0]).Contains(p.ExitCode)) return ("", $"git 退出码 {p.ExitCode}：{err.Trim()}");
+            if (!(okExitCodes ?? [0]).Contains(p.ExitCode)) return ("", L($"git 退出码 {p.ExitCode}：{err.Trim()}", $"git exit code {p.ExitCode}: {err.Trim()}"));
             return (output, null);
         }
-        catch (System.ComponentModel.Win32Exception) { return ("", "没有找到 git 可执行文件"); }
+        catch (System.ComponentModel.Win32Exception) { return ("", L("没有找到 git 可执行文件", "git executable not found")); }
     }
 }

@@ -1,9 +1,11 @@
+import "./localeInit"; // 必须最先：定好界面语言，后面模块的文案常量才按对的语言求值
 import * as crypto from "node:crypto";
 import { promises as fsp } from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { AiServicePresets, apiKeySecretKey, endpointHost, isLoopbackEndpoint, matchPreset, normalizeProvider, serviceName, type AiServicePreset } from "./aiServices";
 import { detectBackendsToSuggest, multiSuggestionMessage, PromptedStateKey, projectsWithCandidate, readRepoConfigProjects, suggestionMessage, type BackendCandidate, type DetectFs } from "./backendDetect";
+import { L } from "../webview/l10n";
 import { ServerClient } from "./client";
 import { SharedFollow } from "./cursorFollow";
 import { registerCodeLens, type CodeAtlasLens } from "./codeLens";
@@ -11,8 +13,10 @@ import { registerImpactView, type ImpactView } from "./impactView";
 import { registerJumpCommands } from "./jumpCommands";
 import { PanelCursorFollow } from "./panelFollow";
 import { IndexScheduler } from "./indexScheduler";
+import { registerExternalChangeWatch, type ExternalChangeWatch } from "./externalChanges";
 import { registerCallOutline, type CallOutline } from "./outlineView";
 import { PanelHost } from "./panel";
+import { registerTrailHandler } from "./trailHandler";
 import { findServerExecutable, MaxAiConcurrency, MinAiConcurrency, packageTargetMismatch, resolveProjects, ServerManager, ServerNotFoundError, ServerProcess, type AiOptions, type ProjectOptions } from "./serverManager";
 
 const SupportedExtensions = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".cs", ".go", ".py", ".java"]);
@@ -33,6 +37,8 @@ let workspaceState: vscode.Memento;
 /** 本扩展宿主进程生成一次，所有服务进程共用；页面通过 init 消息拿到。 */
 let token: string;
 const schedulers = new Map<string, IndexScheduler>();
+/** 编辑器之外的磁盘改动 → 增量索引（见 externalChanges.ts）。 */
+let externalWatch: ExternalChangeWatch | undefined;
 
 /** 一次「选择服务」会连写好几项设置，合并成一次重启。 */
 const AiRestartDebounceMs = 400;
@@ -52,14 +58,14 @@ export function activate(context: vscode.ExtensionContext): void {
   status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);
   status.command = "codeatlas.openPanel";
   status.text = "$(type-hierarchy) CodeTrail Graph";
-  status.tooltip = "打开 CodeTrail Graph 面板";
+  status.tooltip = L("打开 CodeTrail Graph 面板", "Open CodeTrail Graph Panel");
   status.show();
 
   const log = { info: (l: string) => output.appendLine(l), error: (l: string) => output.appendLine(`[stderr] ${l}`) };
   packageMismatch = packageTargetMismatch(path.join(context.extensionPath, "server"), String(context.extension.packageJSON.version ?? "0.0.0"));
   if (packageMismatch) {
     log.error(packageMismatch);
-    status.text = "$(error) CodeTrail Graph · 安装包平台不对";
+    status.text = L("$(error) CodeTrail Graph · 安装包平台不对", "$(error) CodeTrail Graph · Wrong Package Platform");
     status.tooltip = packageMismatch;
     void vscode.window.showErrorMessage(packageMismatch);
   }
@@ -76,6 +82,14 @@ export function activate(context: vscode.ExtensionContext): void {
     requestIndex: (repoRoot, full) => void runIndex(repoRoot, full),
     followCursor: (enabled) => panelFollow?.setEnabled(enabled),
   });
+
+  // 可分享的浏览路径：点 vscode://<扩展 id>/trail?… 链接时在对应仓库打开面板并重放（见 trailHandler.ts）
+  context.subscriptions.push(registerTrailHandler(async (root, trail) => {
+    const apiBase = await ensureServer(root);
+    if (!apiBase) return;
+    panel.show(root, apiBase, token);
+    panel.replayTrail(trail);
+  }));
 
   // 侧边栏视图共用的跟随光标：「调用大纲」（光标所在方法按顺序调了什么）与「影响范围」（改它会影响谁）订阅同一个来源，
   // 光标每次移动只解析一次。服务规则同保存时增量：只在已有索引库时才拉起服务
@@ -116,6 +130,15 @@ export function activate(context: vscode.ExtensionContext): void {
     connect,
     log: viewHost.log,
   }, SupportedExtensions);
+  externalWatch = registerExternalChangeWatch({
+    roots: () => { const p = primaryFolder()?.uri.fsPath; return p ? [p, ...externalRoots(p)] : []; },
+    serverRootFor: (uri) => serverRootFor(uri),
+    hasServer: (root) => servers.has(root),
+    supported: SupportedExtensions,
+    requestIndex: (root) => void runIndex(root, false),
+    log: viewHost.log,
+  });
+  context.subscriptions.push(externalWatch);
 
   context.subscriptions.push(
     output, status, { dispose: () => panel.dispose() }, { dispose: () => servers.stopAll() },
@@ -277,9 +300,11 @@ async function suggestBackend(primary: string): Promise<void> {
   if (candidates.length === 0) return;
   log(`检测到旁边的 .NET 后端：${candidates.map((c) => `${c.dir}（${c.sln}）`).join("、")}`);
   const first = candidates[0]!;
-  const pick = await vscode.window.showInformationMessage(candidates.length === 1 ? suggestionMessage(first) : multiSuggestionMessage(candidates), "一起索引", "不用");
+  const indexTogether = L("一起索引", "Index Together");
+  const noThanks = L("不用", "No Thanks");
+  const pick = await vscode.window.showInformationMessage(candidates.length === 1 ? suggestionMessage(first) : multiSuggestionMessage(candidates), indexTogether, noThanks);
   if (pick === undefined) return;
-  if (pick === "不用") {
+  if (pick === noThanks) {
     await workspaceState.update(PromptedStateKey, true);
     log("用户选择不一起索引旁边的后端，本工作区不再询问");
     return;
@@ -287,8 +312,8 @@ async function suggestBackend(primary: string): Promise<void> {
   let chosen: BackendCandidate = first;
   if (candidates.length > 1) {
     const item = await vscode.window.showQuickPick(
-      candidates.map((c) => ({ label: c.name, description: c.sln, detail: `${c.dir} · 写入 codeatlas.projects："${c.relative}"`, candidate: c })),
-      { title: "CodeTrail Graph: 选择一起索引的 .NET 后端", placeHolder: "选一个；以后可在设置 codeatlas.projects 里增删", ignoreFocusOut: true, matchOnDetail: true },
+      candidates.map((c) => ({ label: c.name, description: c.sln, detail: L(`${c.dir} · 写入 codeatlas.projects："${c.relative}"`, `${c.dir} · adds "${c.relative}" to codeatlas.projects`), candidate: c })),
+      { title: L("CodeTrail Graph: 选择一起索引的 .NET 后端", "CodeTrail Graph: Select a .NET Backend to Index Together"), placeHolder: L("选一个；以后可在设置 codeatlas.projects 里增删", "Pick one; you can add or remove backends later in the codeatlas.projects setting"), ignoreFocusOut: true, matchOnDetail: true },
     );
     if (!item) return;
     chosen = item.candidate;
@@ -309,8 +334,8 @@ async function addBackendProject(primary: string, c: BackendCandidate): Promise<
   const current = cfg.inspect<string[]>("projects")?.workspaceValue;
   await cfg.update("projects", projectsWithCandidate(Array.isArray(current) ? current : [], c), vscode.ConfigurationTarget.Workspace);
   log(`已把 ${c.relative}（${c.dir}）写进工作区设置 codeatlas.projects，重启服务后全量重建`);
-  status.text = "$(sync~spin) CodeTrail Graph · 一起索引后端…";
-  void vscode.window.showInformationMessage(`正在一起索引后端 ${c.name}（全量重建，含 Roslyn），约 2–3 分钟。完成后项目地图能显示前端页面到后端控制器的调用链。`);
+  status.text = L("$(sync~spin) CodeTrail Graph · 一起索引后端…", "$(sync~spin) CodeTrail Graph · Indexing backend…");
+  void vscode.window.showInformationMessage(L(`正在一起索引后端 ${c.name}（全量重建，含 Roslyn），约 2–3 分钟。完成后项目地图能显示前端页面到后端控制器的调用链。`, `Indexing backend ${c.name} together (full rebuild with Roslyn), about 2–3 minutes. Once done, the Project Map can show call chains from frontend pages to backend controllers.`));
   if (!servers.has(primary)) {
     // 服务没起来，设置变化不会触发重启：直接跑（会按新设置拉起服务）
     fullIndexAfterProjectsChange.delete(primary);
@@ -355,7 +380,7 @@ async function onAiSettingsChanged(): Promise<void> {
       reportServerError(e);
     }
   }
-  flash("AI 设置已更新，服务已重启");
+  flash(L("AI 设置已更新，服务已重启", "AI settings updated; server restarted"));
 }
 
 export function deactivate(): void {
@@ -367,10 +392,10 @@ export function deactivate(): void {
 /** 以光标处符号打开面板：graph = 调用图聚焦；relations = 模块关系（以它所属的类为中心）。 */
 async function showSymbolAtCursor(target: "graph" | "relations" = "graph"): Promise<void> {
   const editor = vscode.window.activeTextEditor;
-  if (!editor) { flash("没有打开的编辑器"); return; }
+  if (!editor) { flash(L("没有打开的编辑器", "No active editor")); return; }
   // 多根工作区 / 外部根里的文件都归主根的服务：服务按绝对路径换算成 ../other/… 去查
   const repoRoot = serverRootFor(editor.document.uri);
-  if (!repoRoot) { flash("文件不在任何工作区文件夹或 codeatlas.projects 里"); return; }
+  if (!repoRoot) { flash(L("文件不在任何工作区文件夹或 codeatlas.projects 里", "File is not in any workspace folder or codeatlas.projects")); return; }
   const filePath = editor.document.uri.fsPath;
   const pos = editor.selection.active;
 
@@ -378,12 +403,12 @@ async function showSymbolAtCursor(target: "graph" | "relations" = "graph"): Prom
   if (health === undefined) return;
   if (health.files > 0 && health.needsRebuild) {
     // 索引是旧版本解析规则建的（比如还没有分发边），自动全量重建一次
-    flash("索引格式已更新，正在全量重建…");
+    flash(L("索引格式已更新，正在全量重建…", "Index format updated; running a full rebuild…"));
     log("索引版本过旧，自动全量重建");
     await runIndex(repoRoot, true);
   }
   if (health.files === 0) {
-    const pick = await vscode.window.showInformationMessage("这个工作区还没有 CodeTrail Graph 索引。", "建立索引");
+    const pick = await vscode.window.showInformationMessage(L("这个工作区还没有 CodeTrail Graph 索引。", "This workspace has no CodeTrail Graph index yet."), L("建立索引", "Build Index"));
     if (!pick) return;
     await runIndex(repoRoot, false);
     // 索引完直接接着定位，不让用户再右键一次
@@ -391,7 +416,7 @@ async function showSymbolAtCursor(target: "graph" | "relations" = "graph"): Prom
 
   const symbol = await withServer(repoRoot, (c) => c.symbolAt(filePath, pos.line + 1, pos.character + 1));
   if (symbol === undefined) return;
-  if (!symbol) { flash("光标处没有已索引的符号"); return; }
+  if (!symbol) { flash(L("光标处没有已索引的符号", "No indexed symbol at the cursor")); return; }
   const apiBase = await ensureServer(repoRoot);
   if (!apiBase) return;
   panel.show(repoRoot, apiBase, token);
@@ -401,14 +426,14 @@ async function showSymbolAtCursor(target: "graph" | "relations" = "graph"): Prom
 
 async function openPanel(): Promise<void> {
   const folder = currentFolder();
-  if (!folder) { flash("没有打开的工作区文件夹"); return; }
+  if (!folder) { flash(L("没有打开的工作区文件夹", "No workspace folder is open")); return; }
   const apiBase = await ensureServer(folder.uri.fsPath);
   if (apiBase) panel.show(folder.uri.fsPath, apiBase, token);
 }
 
 async function indexCurrentWorkspace(full: boolean): Promise<void> {
   const folder = currentFolder();
-  if (!folder) { flash("没有打开的工作区文件夹"); return; }
+  if (!folder) { flash(L("没有打开的工作区文件夹", "No workspace folder is open")); return; }
   await runIndex(folder.uri.fsPath, full);
 }
 
@@ -418,7 +443,7 @@ async function restartServer(): Promise<void> {
   try {
     const apiBase = await servers.restart(folder.uri.fsPath);
     if (panel.isOpen) panel.show(folder.uri.fsPath, apiBase, token);
-    flash("CodeTrail Graph 服务已重启");
+    flash(L("CodeTrail Graph 服务已重启", "CodeTrail Graph server restarted"));
     void refreshStatus(new ServerClient(apiBase, token));
   } catch (e) {
     reportServerError(e);
@@ -435,17 +460,17 @@ async function selectAiService(): Promise<void> {
   const current = ai.enabled ? matchPreset(ai.provider ?? "openai", ai.endpoint) : null;
   const items: ServiceItem[] = AiServicePresets.map((p) => ({
     label: p.label,
-    description: `${current?.id === p.id ? "当前 · " : ""}${p.model} · ${endpointHost(p.endpoint)}`,
+    description: `${current?.id === p.id ? L("当前 · ", "Current · ") : ""}${p.model} · ${endpointHost(p.endpoint)}`,
     detail: isLoopbackEndpoint(p.endpoint)
-      ? "本机运行，代码不出机器；27B 模型约 2–4 分钟一条。模型名可在设置里改。"
-      : `联网服务，需要 API Key；事实子图${ai.includeSource ? "与入口源码" : ""}会发送到 ${endpointHost(p.endpoint)}。模型名可在设置里改。`,
+      ? L("本机运行，代码不出机器；27B 模型约 2–4 分钟一条。模型名可在设置里改。", "Runs locally; code never leaves the machine. A 27B model takes about 2–4 minutes per narration. The model name can be changed in settings.")
+      : L(`联网服务，需要 API Key；事实子图${ai.includeSource ? "与入口源码" : ""}会发送到 ${endpointHost(p.endpoint)}。模型名可在设置里改。`, `Online service; requires an API Key. The fact subgraph${ai.includeSource ? " and entry source code" : ""} will be sent to ${endpointHost(p.endpoint)}. The model name can be changed in settings.`),
     preset: p,
   }));
-  items.push({ label: "自定义…", detail: "打开设置页 codeatlas.ai，手动填协议 / 端点 / 模型", custom: true });
+  items.push({ label: L("自定义…", "Custom…"), detail: L("打开设置页 codeatlas.ai，手动填协议 / 端点 / 模型", "Open the codeatlas.ai settings to enter protocol / endpoint / model manually"), custom: true });
 
   const pick = await vscode.window.showQuickPick(items, {
-    title: "CodeTrail Graph: 选择 AI 服务",
-    placeHolder: "叙述用哪个模型服务（预设里的模型名只是默认值）",
+    title: L("CodeTrail Graph: 选择 AI 服务", "CodeTrail Graph: Select AI Service"),
+    placeHolder: L("叙述用哪个模型服务（预设里的模型名只是默认值）", "Model service for narration (preset model names are just defaults)"),
     matchOnDescription: true,
     matchOnDetail: true,
   });
@@ -469,12 +494,14 @@ async function selectAiService(): Promise<void> {
     if (!isLoopbackEndpoint(p.endpoint)) {
       const has = Boolean(await secrets.get(apiKeySecretKey(p.provider, p.endpoint)));
       if (!has && !(await promptApiKey(p.provider, p.endpoint))) {
-        void vscode.window.showWarningMessage(`已切换到 ${p.label}，但还没有 API Key，叙述会不可用。稍后可运行「CodeTrail Graph: 设置 AI API Key」。`);
+        void vscode.window.showWarningMessage(L(`已切换到 ${p.label}，但还没有 API Key，叙述会不可用。稍后可运行「CodeTrail Graph: 设置 AI API Key」。`, `Switched to ${p.label}, but no API Key is set, so narration is unavailable. Run "CodeTrail Graph: Set AI API Key" later.`));
       }
-      const sends = aiOptions().includeSource ? "事实子图与入口方法源码" : "事实子图";
-      void vscode.window.showInformationMessage(`已切换到 ${p.label}（${p.model}）。叙述会把${sends}发送到 ${endpointHost(p.endpoint)}，请确认符合公司数据政策。`);
+      const sends = aiOptions().includeSource
+        ? L("事实子图与入口方法源码", "the fact subgraph and entry method source code")
+        : L("事实子图", "the fact subgraph");
+      void vscode.window.showInformationMessage(L(`已切换到 ${p.label}（${p.model}）。叙述会把${sends}发送到 ${endpointHost(p.endpoint)}，请确认符合公司数据政策。`, `Switched to ${p.label} (${p.model}). Narration will send ${sends} to ${endpointHost(p.endpoint)}. Make sure this complies with your company's data policy.`));
     } else {
-      flash(`AI 服务已切换为 ${p.label}`);
+      flash(L(`AI 服务已切换为 ${p.label}`, `AI service switched to ${p.label}`));
     }
   } finally {
     aiRestartSuppressed--;
@@ -504,12 +531,12 @@ async function promptApiKey(provider: string, endpoint: string): Promise<boolean
   const name = serviceName(provider, endpoint);
   const key = apiKeySecretKey(provider, endpoint);
   const value = await vscode.window.showInputBox({
-    title: `设置 AI API Key：${name}（${endpointHost(endpoint)}）`,
-    prompt: "保存在 VS Code SecretStorage，不写进 settings.json；按协议 + 主机分别保存，切换服务不用重输。",
-    placeHolder: "粘贴 API Key",
+    title: L(`设置 AI API Key：${name}（${endpointHost(endpoint)}）`, `Set AI API Key: ${name} (${endpointHost(endpoint)})`),
+    prompt: L("保存在 VS Code SecretStorage，不写进 settings.json；按协议 + 主机分别保存，切换服务不用重输。", "Stored in VS Code SecretStorage, not in settings.json. Saved per protocol + host, so switching services doesn't require re-entering it."),
+    placeHolder: L("粘贴 API Key", "Paste API Key"),
     password: true,
     ignoreFocusOut: true,
-    validateInput: (v) => (v.trim() ? null : "API Key 不能为空"),
+    validateInput: (v) => (v.trim() ? null : L("API Key 不能为空", "API Key cannot be empty")),
   });
   if (value === undefined || !value.trim()) return false;
   await secrets.store(key, value.trim());
@@ -521,7 +548,7 @@ async function promptApiKey(provider: string, endpoint: string): Promise<boolean
 async function setApiKeyCommand(): Promise<void> {
   const ai = aiOptions();
   if (!(await promptApiKey(ai.provider ?? "openai", ai.endpoint))) return;
-  flash("API Key 已保存，服务重启中");
+  flash(L("API Key 已保存，服务重启中", "API Key saved; restarting server"));
   scheduleAiRestart();
 }
 
@@ -531,18 +558,19 @@ async function clearApiKeyCommand(): Promise<void> {
   const name = serviceName(ai.provider, ai.endpoint);
   const key = currentApiKeyName();
   if (!(await secrets.get(key))) {
-    flash(`${name}（${endpointHost(ai.endpoint)}）没有已保存的 API Key`);
+    flash(L(`${name}（${endpointHost(ai.endpoint)}）没有已保存的 API Key`, `No saved API Key for ${name} (${endpointHost(ai.endpoint)})`));
     return;
   }
   await secrets.delete(key);
   log(`已清除 ${name} 的 API Key（SecretStorage 键 ${key}）`);
-  flash("API Key 已清除，服务重启中");
+  flash(L("API Key 已清除，服务重启中", "API Key cleared; restarting server"));
   scheduleAiRestart();
 }
 
 // ---------- 索引 ----------
 
 function onSaved(doc: vscode.TextDocument): void {
+  externalWatch?.markSaved(doc.uri.fsPath); // 保存归 indexOnSave：磁盘监听不再为它排一次
   if (!vscode.workspace.getConfiguration("codeatlas").get<boolean>("indexOnSave", true)) return;
   if (!SupportedExtensions.has(path.extname(doc.fileName).toLowerCase())) return;
   const repoRoot = serverRootFor(doc.uri);
@@ -577,15 +605,15 @@ async function doIndex(repoRoot: string, full: boolean): Promise<void> {
     started = await withServer(repoRoot, (c) => c.startIndex(full));
   }
   if (started === undefined) return;
-  status.text = "$(sync~spin) CodeTrail Graph · 索引中";
+  status.text = L("$(sync~spin) CodeTrail Graph · 索引中", "$(sync~spin) CodeTrail Graph · Indexing");
   const final = await withServer(repoRoot, (c) => c.waitForIndex((s) => {
     if (!s.running) return;
-    if (s.phase === "roslyn") status.text = s.total ? `$(sync~spin) CodeTrail Graph · Roslyn ${s.done}/${s.total}` : "$(sync~spin) CodeTrail Graph · Roslyn 编译中";
+    if (s.phase === "roslyn") status.text = s.total ? `$(sync~spin) CodeTrail Graph · Roslyn ${s.done}/${s.total}` : L("$(sync~spin) CodeTrail Graph · Roslyn 编译中", "$(sync~spin) CodeTrail Graph · Roslyn compiling");
     else if (s.total) status.text = `$(sync~spin) CodeTrail Graph · ${s.phase} ${s.done}/${s.total}`;
   }));
   if (final === undefined) return;
   if (final.error) {
-    status.text = "$(warning) CodeTrail Graph · 索引失败";
+    status.text = L("$(warning) CodeTrail Graph · 索引失败", "$(warning) CodeTrail Graph · Indexing failed");
     log(`索引失败：${final.error}`);
     return;
   }
@@ -596,7 +624,8 @@ async function doIndex(repoRoot: string, full: boolean): Promise<void> {
     // 缺 .NET 只提示一次：地图照常能用，只是 C# 的调用精度低一些
     if (r.roslyn.unavailable && !roslynUnavailableShown) {
       roslynUnavailableShown = true;
-      void vscode.window.showInformationMessage(`CodeTrail Graph：${r.roslyn.error ?? "C# 精确语义不可用"}`);
+      const reason = r.roslyn.error ?? L("C# 精确语义不可用", "C# precise semantics unavailable");
+      void vscode.window.showInformationMessage(L(`CodeTrail Graph：${reason}`, `CodeTrail Graph: ${reason}`));
     }
     else log(`Roslyn 完成：${r.roslyn.files} 文件，合并 ${r.roslyn.symbolsMerged} 符号，${r.roslyn.edges} 条精确边，${r.roslyn.elapsedSeconds.toFixed(1)}s`);
   }
@@ -613,8 +642,10 @@ async function doIndex(repoRoot: string, full: boolean): Promise<void> {
 async function refreshStatus(client: ServerClient): Promise<void> {
   try {
     const h = await client.health();
-    status.text = h.files === 0 ? "$(type-hierarchy) CodeTrail Graph · 未索引" : `$(type-hierarchy) CodeTrail Graph · ${formatCount(h.symbols)} 符号`;
-    status.tooltip = `${h.files} 个文件 · ${h.symbols} 个符号\n${h.repo}`;
+    status.text = h.files === 0
+      ? L("$(type-hierarchy) CodeTrail Graph · 未索引", "$(type-hierarchy) CodeTrail Graph · Not indexed")
+      : L(`$(type-hierarchy) CodeTrail Graph · ${formatCount(h.symbols)} 符号`, `$(type-hierarchy) CodeTrail Graph · ${formatCount(h.symbols)} ${h.symbols === 1 ? "symbol" : "symbols"}`);
+    status.tooltip = L(`${h.files} 个文件 · ${h.symbols} 个符号\n${h.repo}`, `${h.files} ${h.files === 1 ? "file" : "files"} · ${h.symbols} ${h.symbols === 1 ? "symbol" : "symbols"}\n${h.repo}`);
   } catch { /* 状态栏保持原样 */ }
 }
 
@@ -633,6 +664,7 @@ async function withServer<T>(repoRoot: string, fn: (client: ServerClient) => Pro
     try {
       const recovered = await servers.recover(repoRoot);
       if (panel.isOpen) panel.show(repoRoot, recovered, token);
+      void followStartupReconcile(repoRoot, recovered);
       return await fn(new ServerClient(recovered, token));
     } catch (second) {
       reportServerError(second);
@@ -643,17 +675,46 @@ async function withServer<T>(repoRoot: string, fn: (client: ServerClient) => Pro
 
 async function ensureServer(repoRoot: string): Promise<string | null> {
   try {
-    if (!servers.has(repoRoot)) {
-      status.text = "$(sync~spin) CodeTrail Graph · 启动服务…";
+    const fresh = !servers.has(repoRoot);
+    if (fresh) {
+      status.text = L("$(sync~spin) CodeTrail Graph · 启动服务…", "$(sync~spin) CodeTrail Graph · Starting server…");
       maybeSuggestBackend(repoRoot);
     }
     const apiBase = await servers.ensure(repoRoot);
     void refreshStatus(new ServerClient(apiBase, token));
+    if (fresh) void followStartupReconcile(repoRoot, apiBase);
     return apiBase;
   } catch (e) {
     reportServerError(e);
     return null;
   }
+}
+
+/** 服务自己跑完一次索引（启动对账）后：同 doIndex 的收尾，刷新状态栏，通知面板与侧边栏各视图重取。 */
+async function afterIndexed(repoRoot: string): Promise<void> {
+  const apiBase = await ensureServer(repoRoot);
+  if (apiBase) await refreshStatus(new ServerClient(apiBase, token));
+  panel.indexChanged();
+  outline?.indexChanged();
+  impact?.indexChanged();
+  follow?.indexChanged();
+  lens?.indexChanged();
+}
+
+/**
+ * 新起的服务（首次连接、崩溃后重连、改设置重启）会先和磁盘对一次账，把它没在跑时的改动（扩展没开、AI 助手写盘、git pull）
+ * 排进一次增量索引（服务端 TryStartReconcile）。这里等它结束，真跑了索引就像索引完成一样刷新各视图。
+ */
+async function followStartupReconcile(repoRoot: string, apiBase: string): Promise<void> {
+  try {
+    const client = new ServerClient(apiBase, token);
+    if (!(await client.status()).running) return;
+    const final = await client.waitForIndex(() => {});
+    if (!final.lastReport || final.error) return;
+    // 这次等到的也可能是同时发起的一次手动索引：一样要刷新，日志不硬说是对账
+    log(`服务启动后的对账 / 索引已结束：重新解析 ${final.lastReport.filesParsed} 个文件，删除 ${final.lastReport.filesRemoved} 个`);
+    await afterIndexed(repoRoot);
+  } catch { /* 服务又没了：下次请求会走重启 */ }
 }
 
 function reportServerError(e: unknown): void {
@@ -663,12 +724,12 @@ function reportServerError(e: unknown): void {
     return;
   }
   if (e instanceof ServerNotFoundError) {
-    void vscode.window.showErrorMessage(e.message, "打开设置").then((pick) => {
+    void vscode.window.showErrorMessage(e.message, L("打开设置", "Open Settings")).then((pick) => {
       if (pick) void vscode.commands.executeCommand("workbench.action.openSettings", "codeatlas.serverPath");
     });
     return;
   }
-  status.text = "$(error) CodeTrail Graph · 服务不可用";
+  status.text = L("$(error) CodeTrail Graph · 服务不可用", "$(error) CodeTrail Graph · Server unavailable");
   log(`服务错误：${e}`);
   output.show(true);
 }
@@ -694,7 +755,7 @@ function currentFolder(): vscode.WorkspaceFolder | undefined {
 }
 
 function flash(message: string): void {
-  vscode.window.setStatusBarMessage(`CodeTrail Graph：${message}`, 3000);
+  vscode.window.setStatusBarMessage(L(`CodeTrail Graph：${message}`, `CodeTrail Graph: ${message}`), 3000);
 }
 
 function log(line: string): void {

@@ -11,7 +11,7 @@ public sealed class VsCodeExtensionRule : IDiscoveryRule
 {
     public const string RuleId = "vscode-extension";
     public string Id => RuleId;
-    public string Description => "VS Code 扩展拉起的本仓库进程（spawn 的可执行文件名）与对它的 HTTP 调用";
+    public string Description => L("VS Code 扩展拉起的本仓库进程（spawn 的可执行文件名）与对它的 HTTP 调用", "Processes of this repository spawned by a VS Code extension (spawned executable name) and HTTP calls to them");
 
     private static readonly Regex Spawn = new(@"\b(?:spawn|spawnSync|execFile|execFileSync|fork)\s*\(", RegexOptions.Compiled);
     private static readonly Regex Literal = new(@"[""'`]([\w.\-]+)[""'`]", RegexOptions.Compiled);
@@ -46,7 +46,7 @@ public sealed class VsCodeExtensionRule : IDiscoveryRule
                 break;
             }
             if (target is null || spawnSite is not { } s) continue;
-            ctx.Outbound.Add(new Outbound(ext.Key, RuleId, "http", $"拉起 {s.Exe}", null, null, s.File, s.Line, target.Key));
+            ctx.Outbound.Add(new Outbound(ext.Key, RuleId, "http", L($"拉起 {s.Exe}", $"spawns {s.Exe}"), null, null, s.File, s.Line, target.Key));
             foreach (var f in files)
             {
                 var lines = ctx.Lines(f);
@@ -55,7 +55,7 @@ public sealed class VsCodeExtensionRule : IDiscoveryRule
                 var text = SourceMask.WithoutComments(lines, SourceLang.JavaScript);
                 var call = Enumerable.Range(0, lines.Length).FirstOrDefault(i => ApiCall.IsMatch(code[i]) && text.Skip(Math.Max(0, i - 3)).Take(7).Any(t => t.Contains("/api/", StringComparison.Ordinal)), -1);
                 if (call < 0) continue;
-                ctx.Outbound.Add(new Outbound(ext.Key, RuleId, "http", $"{s.Exe} 的 /api/*", null, null, f, call + 1, target.Key));
+                ctx.Outbound.Add(new Outbound(ext.Key, RuleId, "http", L($"{s.Exe} 的 /api/*", $"/api/* of {s.Exe}"), null, null, f, call + 1, target.Key));
             }
         }
     }

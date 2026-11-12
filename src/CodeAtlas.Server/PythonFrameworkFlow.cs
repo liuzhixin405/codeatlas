@@ -49,22 +49,26 @@ public static partial class PythonFrameworkFlow
             "Django" => BuildDjango(x, django!, notes),
             _ => BuildFlask(x, flask, notes),
         };
-        if (others.Count > 0) notes.Add($"这个容器里还认出了 {string.Join("、", others)}，按 HTTP 入口多的 {pick} 画");
+        if (others.Count > 0)
+        {
+            var otherNames = string.Join(ListSep, others);
+            notes.Add(L($"这个容器里还认出了 {otherNames}，按 HTTP 入口多的 {pick} 画", $"This container also uses {otherNames}; drawn as {pick}, which has more HTTP entry points"));
+        }
         var nonHttp = x.Entries.Count - x.Http.Count;
-        if (nonHttp > 0) notes.Add($"另有 {nonHttp} 个非 HTTP 入口（任务 / 命令行 / 常驻进程），没画在这条请求链上");
+        if (nonHttp > 0) notes.Add(L($"另有 {nonHttp} 个非 HTTP 入口（任务 / 命令行 / 常驻进程），没画在这条请求链上", $"{Plural(nonHttp, "other non-HTTP entry point", "other non-HTTP entry points")} (jobs / CLI / long-running processes) not drawn on this request chain"));
         return flow;
     }
 
     /// <summary>没认出 Web 框架：有入口就画一个"入口"占位，否则只有根。</summary>
     private static FrameworkFlowDto NonWeb(Py x)
     {
-        var notes = new List<string> { "没认出 Python Web 框架（FastAPI 的 app = FastAPI(...)、Django settings 的 MIDDLEWARE、Flask 的 app = Flask(...)）" };
-        if (x.Entries.Count == 0) { notes.Add("没有发现入口"); return Empty(x.Container, notes); }
-        notes.Add("按非 Web 容器画：入口是任务 / 命令行 / 常驻进程");
-        var entry = Node(null, "入口（任务 / 命令行 / 常驻进程）", "", "controllers", StageController, null, [], null, null, x.Entries.Count);
-        var root = Node(null, "入口", "", "entry", StageController, null, [entry], null, null);
-        var stages = new List<FrameworkStageDto> { new(StageController, "入口", true, x.EntrySymbols(x.Entries)) };
-        return Assemble(x.Container, "入口", root, stages, [], notes);
+        var notes = new List<string> { L("没认出 Python Web 框架（FastAPI 的 app = FastAPI(...)、Django settings 的 MIDDLEWARE、Flask 的 app = Flask(...)）", "No Python web framework recognized (FastAPI's app = FastAPI(...), MIDDLEWARE in Django settings, Flask's app = Flask(...))") };
+        if (x.Entries.Count == 0) { notes.Add(L("没有发现入口", "No entry points found")); return Empty(x.Container, notes); }
+        notes.Add(L("按非 Web 容器画：入口是任务 / 命令行 / 常驻进程", "Drawn as a non-web container: entry points are jobs / CLI / long-running processes"));
+        var entry = Node(null, L("入口（任务 / 命令行 / 常驻进程）", "Entry points (jobs / CLI / long-running processes)"), "", "controllers", StageController, null, [], null, null, x.Entries.Count);
+        var root = Node(null, L("入口", "Entry"), "", "entry", StageController, null, [entry], null, null);
+        var stages = new List<FrameworkStageDto> { new(StageController, L("入口", "Entry"), true, x.EntrySymbols(x.Entries)) };
+        return Assemble(x.Container, L("入口", "Entry"), root, stages, [], notes, L("入口", "Entry"));
     }
 
     // ================= 共用：容器、符号、调用 =================

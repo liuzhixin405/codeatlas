@@ -1,3 +1,4 @@
+import { L } from "./l10n";
 import type { DsmCellDto, DsmComponentDto, DsmCouplingDto, DsmDto, DsmHotDto, DsmRuleDto } from "./types";
 
 /** 格子着色分档：按与最大值的比例分 4 档，0 不画。 */
@@ -9,7 +10,7 @@ export function bucket(count: number, max: number): 0 | 1 | 2 | 3 | 4 {
 
 /** 组件的修订数文案：有去重后的提交数写"N 次提交"，没有写"文件修订合计 N"（同一次提交改了几个文件算几次）。 */
 export function hotRevisionsText(hot: DsmHotDto): string {
-  return hot.commits !== undefined && hot.commits !== null ? `${hot.commits} 次提交` : `文件修订合计 ${hot.revisions}`;
+  return hot.commits !== undefined && hot.commits !== null ? L(`${hot.commits} 次提交`, `${hot.commits} ${hot.commits === 1 ? "commit" : "commits"}`) : L(`文件修订合计 ${hot.revisions}`, `${hot.revisions} file revisions in total`);
 }
 
 /** 热度分档：按修订数相对最大值。 */
@@ -58,22 +59,22 @@ export interface DsmModel {
 /** 表头统计：`声明规则 N 条，违规 M 处`；没有规则返回 null（不显示）。 */
 export function rulesSummary(model: Pick<DsmModel, "ruleCount" | "violationCells">): string | null {
   if (model.ruleCount === 0) return null;
-  return `声明规则 ${model.ruleCount} 条，违规 ${model.violationCells} 处`;
+  return L(`声明规则 ${model.ruleCount} 条，违规 ${model.violationCells} 处`, `${model.ruleCount} declared ${model.ruleCount === 1 ? "rule" : "rules"}, ${model.violationCells} ${model.violationCells === 1 ? "violation" : "violations"}`);
 }
 
 const KIND_LABEL: Record<string, string> = {
-  "forbid-dependency": "禁止依赖",
-  "require-dependency": "必须依赖",
-  placement: "放置位置",
+  "forbid-dependency": L("禁止依赖", "Forbidden dependency"),
+  "require-dependency": L("必须依赖", "Required dependency"),
+  placement: L("放置位置", "Placement"),
 };
 
 /** 一条命中规则的说明：`禁止依赖 A → B：测试名（文件:行），3 条边`。yaml 规则没有测试名与行号。 */
 export function ruleLine(v: DsmCellViolation): string {
   const r = v.rule;
   const where = r.line > 0 ? `${r.file}:${r.line}` : r.file;
-  const who = r.testName ? `${r.testName}（${where}）` : where;
-  const what = v.count > 0 ? `，${v.count} 条边` : r.kind === "require-dependency" ? "，一条依赖都没有" : "";
-  return `${KIND_LABEL[r.kind] ?? r.kind} ${r.from} → ${r.to ?? "?"}：${who}${what}`;
+  const who = r.testName ? L(`${r.testName}（${where}）`, `${r.testName} (${where})`) : where;
+  const what = v.count > 0 ? L(`，${v.count} 条边`, `, ${v.count} ${v.count === 1 ? "edge" : "edges"}`) : r.kind === "require-dependency" ? L("，一条依赖都没有", ", no dependency at all") : "";
+  return `${KIND_LABEL[r.kind] ?? r.kind} ${r.from} → ${r.to ?? "?"}${L("：", ": ")}${who}${what}`;
 }
 
 /** 把 DTO 变成逐格的渲染模型。纯函数，便于测试。 */
@@ -157,7 +158,7 @@ export class DsmView {
     if (model.components.length === 0) {
       const p = document.createElement("p");
       p.className = "dsm-empty";
-      p.textContent = dto.note ?? "没有组件";
+      p.textContent = dto.note ?? L("没有组件", "No components");
       this.container.appendChild(p);
       return;
     }
@@ -166,7 +167,7 @@ export class DsmView {
       const p = document.createElement("div");
       p.className = "dsm-rules-summary" + (model.violationCells > 0 ? " has-violations" : "");
       p.textContent = summary;
-      p.title = "规则来自测试项目里的 NetArchTest 链与 .codeatlas/architecture.yaml；红框 = 违反禁止依赖，红虚框 ! = 必须依赖却没有；组件比规则粗时这一层不判，钻进去才判";
+      p.title = L("规则来自测试项目里的 NetArchTest 链与 .codeatlas/architecture.yaml；红框 = 违反禁止依赖，红虚框 ! = 必须依赖却没有；组件比规则粗时这一层不判，钻进去才判", "Rules come from NetArchTest chains in test projects and .codeatlas/architecture.yaml; red box = forbidden dependency violated, dashed red box ! = required dependency missing; when components are coarser than the rules this level is not checked, drill in to check");
       this.container.appendChild(p);
     }
     // 格子命中的规则列在表格下方（详情栏由 main.ts 写，规则另起一块，点格子时刷新）
@@ -195,7 +196,7 @@ export class DsmView {
       th.className = "row" + (model.cycleSccs.has(comp.scc) ? " cycle" : "") + (comp.hasChildren ? " drill" : "");
       const heatLevel = heat(comp.hot?.revisions ?? 0, model.maxRevisions);
       th.innerHTML = `<span class="idx">${r + 1}</span><span class="name" title="${esc(comp.key)}">${esc(comp.label)}</span><span class="count">${comp.symbols}</span>` +
-        (comp.hot ? `<span class="heat h${heatLevel}" title="${hotRevisionsText(comp.hot)}，最近 ${comp.hot.lastCommit}"></span>` : "");
+        (comp.hot ? `<span class="heat h${heatLevel}" title="${hotRevisionsText(comp.hot)}${L(`，最近 ${comp.hot.lastCommit}`, `, last ${comp.hot.lastCommit}`)}"></span>` : "");
       th.onclick = () => this.cb.onComponentSelect(comp);
       th.ondblclick = () => this.cb.onComponentDoubleClick(comp);
       tr.appendChild(th);
@@ -205,7 +206,7 @@ export class DsmView {
         if (cell.row !== cell.col) {
           td.textContent = cellText(cell);
           const to = model.components[cell.col]!;
-          td.title = `${comp.label} → ${to.label}` + (cell.count ? `：${cell.count}` : "") + (cell.coupled ? `；常一起改 ${cell.coupled.shared} 次` : "") +
+          td.title = `${comp.label} → ${to.label}` + (cell.count ? L(`：${cell.count}`, `: ${cell.count}`) : "") + (cell.coupled ? L(`；常一起改 ${cell.coupled.shared} 次`, `; often changed together (${cell.coupled.shared} ${cell.coupled.shared === 1 ? "time" : "times"})`) : "") +
             cell.violations.map((v) => "\n⚠ " + ruleLine(v)).join("");
           td.onclick = () => {
             this.cb.onCellSelect(cell, comp, to);
@@ -226,7 +227,7 @@ export class DsmView {
 function showRuleDetail(el: HTMLElement, cell: DsmCellModel, from: DsmComponentDto, to: DsmComponentDto): void {
   if (cell.violations.length === 0) { el.style.display = "none"; el.innerHTML = ""; return; }
   el.style.display = "";
-  el.innerHTML = `<div class="head">${esc(from.label)} → ${esc(to.label)}：命中 ${cell.violations.length} 条声明规则</div>` +
+  el.innerHTML = `<div class="head">${esc(from.label)} → ${esc(to.label)}${L(`：命中 ${cell.violations.length} 条声明规则`, `: matches ${cell.violations.length} declared ${cell.violations.length === 1 ? "rule" : "rules"}`)}</div>` +
     cell.violations.map((v) =>
       `<div class="rule ${v.rule.kind === "require-dependency" ? "require" : "forbid"}">${esc(ruleLine(v))}` +
       (v.rule.source !== "netarchtest" && v.rule.source !== "yaml" ? `<span class="muted">${esc(v.rule.source)}</span>` : "") + "</div>").join("");

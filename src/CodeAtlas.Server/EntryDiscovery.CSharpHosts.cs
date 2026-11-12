@@ -670,6 +670,6 @@ public static partial class EntryDiscovery
     }
 
     /// <summary>route 后缀：条件注册 / 找不到注册的常驻服务、Hub、作业照给，但写明。</summary>
-    private const string ConditionalSuffix = "（条件注册）";
-    private const string UnconfirmedSuffix = "（未确认宿主注册）";
+    private static string ConditionalSuffix => L("（条件注册）", " (conditional registration)");
+    private static string UnconfirmedSuffix => L("（未确认宿主注册）", " (host registration not confirmed)");
 }

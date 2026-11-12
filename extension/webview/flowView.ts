@@ -1,3 +1,4 @@
+import { L } from "./l10n";
 import type { FlowPreset } from "./flowLayout";
 import { frameworkJumpText, frameworkJumpTitle } from "./frameworkModel";
 import { esc, SequenceDiagram } from "./seqDiagram";
@@ -5,15 +6,15 @@ import type { EntryDto, FlowDto, FlowNodeDto } from "./types";
 
 /** 入口种类的分组标题，也决定分组顺序。 */
 export const EntryKindLabels: Record<string, string> = {
-  http: "HTTP 路由",
-  command: "命令行命令",
-  hosted: "常驻服务",
-  job: "定时任务",
+  http: L("HTTP 路由", "HTTP routes"),
+  command: L("命令行命令", "CLI commands"),
+  hosted: L("常驻服务", "Hosted services"),
+  job: L("定时任务", "Scheduled jobs"),
   hub: "SignalR",
-  grpc: "gRPC 服务",
-  handler: "分发处理器",
-  page: "前端页面",
-  "api-route": "前端 API 路由",
+  grpc: L("gRPC 服务", "gRPC services"),
+  handler: L("分发处理器", "Dispatch handlers"),
+  page: L("前端页面", "Frontend pages"),
+  "api-route": L("前端 API 路由", "Frontend API routes"),
 };
 
 export interface FlowViewCallbacks {
@@ -92,9 +93,9 @@ export function entryFlowHeader(dto: FlowDto, onFramework?: (dto: FlowDto) => vo
   const head = document.createElement("div");
   head.className = "flow-head";
   const title = dto.route && dto.route !== dto.entryLabel ? `${esc(dto.entryLabel)} <span class="muted">${esc(dto.route)}</span>` : esc(dto.entryLabel);
-  const stats = [`${dto.nodes} 个节点`];
-  if (dto.truncated) stats.push("已截断");
-  head.innerHTML = `<div class="flow-title"><span class="kind">入口</span><span class="label">${title}</span><span class="muted">容器 ${esc(dto.containerKey)} · ${esc(stats.join("，"))}</span></div>`;
+  const stats = [L(`${dto.nodes} 个节点`, `${dto.nodes} ${dto.nodes === 1 ? "node" : "nodes"}`)];
+  if (dto.truncated) stats.push(L("已截断", "truncated"));
+  head.innerHTML = `<div class="flow-title"><span class="kind">${L("入口", "Entry")}</span><span class="label">${title}</span><span class="muted">${L("容器", "Container")} ${esc(dto.containerKey)} · ${esc(stats.join(L("，", ", ")))}</span></div>`;
   appendFlowHeadExtras(head, dto, onFramework);
   return head;
 }
@@ -144,6 +145,10 @@ export class FlowView {
   private readonly search: HTMLInputElement;
   private readonly list: HTMLElement;
   private readonly seq: SequenceDiagram;
+  /** 右栏的时序图（导出图片用）。 */
+  get sequence(): SequenceDiagram {
+    return this.seq;
+  }
   private entries: EntryDto[] = [];
   /** 选中的那一条入口（不是符号：顶级语句里的几条 Minimal API 路由与 Main 入口落在同一个符号上）。 */
   private selected: string | null = null;
@@ -154,14 +159,14 @@ export class FlowView {
     left.className = "flow-list";
     this.search = document.createElement("input");
     this.search.className = "flow-search";
-    this.search.placeholder = "筛选入口（路由 / 名字）";
+    this.search.placeholder = L("筛选入口（路由 / 名字）", "Filter entries (route / name)");
     this.search.autocomplete = "off";
     this.search.oninput = () => this.renderList();
     this.list = document.createElement("div");
     this.list.className = "flow-entries";
     const resizer = document.createElement("div");
     resizer.className = "flow-resizer";
-    resizer.title = "拖动调整入口列表宽度";
+    resizer.title = L("拖动调整入口列表宽度", "Drag to resize the entry list");
     left.append(this.search, this.list, resizer);
     const diagram = document.createElement("div");
     diagram.className = "flow-diagram";
@@ -193,7 +198,7 @@ export class FlowView {
   }
 
   /** 右侧回到提示文字（换容器、还没选入口时）。 */
-  clearFlow(hint = "在左侧选一个入口，看它一路调到哪里。"): void {
+  clearFlow(hint = L("在左侧选一个入口，看它一路调到哪里。", "Pick an entry on the left to see where its calls lead.")): void {
     this.seq.clear(hint);
   }
 
@@ -214,7 +219,7 @@ export class FlowView {
     if (shown.length === 0) {
       const p = document.createElement("p");
       p.className = "flow-empty";
-      p.textContent = this.entries.length === 0 ? "这个容器里没有发现入口（或服务版本太旧）" : "没有匹配的入口";
+      p.textContent = this.entries.length === 0 ? L("这个容器里没有发现入口（或服务版本太旧）", "No entries found in this container (or the server is too old)") : L("没有匹配的入口", "No matching entries");
       this.list.appendChild(p);
       return;
     }

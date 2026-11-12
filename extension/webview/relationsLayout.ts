@@ -1,3 +1,4 @@
+import { L } from "./l10n";
 import type { RelationComponentDto, RelationEdgeDto, RelationKind, RelationNodeDto, RelationsDto, SymbolDto } from "./types";
 
 // ---- 模块关系视图的纯版式：组件成列（依赖序从左到右，外部最右），列内单元按距离 / 与中心的权重 / 名字排 ----
@@ -17,12 +18,12 @@ export const RelMaxSubColumns = 3;
 
 /** 关系的中文名；新增 RelationKind 时这里必须补（测试会检查覆盖）。 */
 export const RelationKindLabels: Record<RelationKind, string> = {
-  call: "调用",
-  new: "构造",
-  dispatch: "分派",
-  inherits: "继承",
-  implements: "实现",
-  reference: "引用",
+  call: L("调用", "call"),
+  new: L("构造", "new"),
+  dispatch: L("分派", "dispatch"),
+  inherits: L("继承", "inherits"),
+  implements: L("实现", "implements"),
+  reference: L("引用", "reference"),
 };
 
 /** 汇总标签里的先后：先成员层面的调用，再结构关系，最后类型引用。 */
@@ -33,15 +34,15 @@ const Structural: ReadonlySet<RelationKind> = new Set<RelationKind>(["inherits",
 
 /** 单元种类的中文名（详情条用）；abstract 是页面按签名判出来的抽象类。 */
 export const UnitKindLabels: Record<string, string> = {
-  class: "类",
-  abstract: "抽象类",
-  interface: "接口",
-  struct: "结构",
-  enum: "枚举",
-  module: "模块",
-  type_alias: "类型别名",
-  function: "函数",
-  external: "外部类型",
+  class: L("类", "Class"),
+  abstract: L("抽象类", "Abstract class"),
+  interface: L("接口", "Interface"),
+  struct: L("结构", "Struct"),
+  enum: L("枚举", "Enum"),
+  module: L("模块", "Module"),
+  type_alias: L("类型别名", "Type alias"),
+  function: L("函数", "Function"),
+  external: L("外部类型", "External type"),
 };
 
 export function unitKindLabel(unit: SymbolDto): string {
@@ -154,7 +155,7 @@ export function reverseNote(edge: RelationEdgeDto, dto: RelationsDto): string | 
   const r = componentResolver(dto);
   if (!r.reverse(edge)) return null;
   const [from, to] = r.pair(edge)!;
-  return `反向依赖：${from.label} 组件依赖了 ${to.label} 组件`;
+  return L(`反向依赖：${from.label} 组件依赖了 ${to.label} 组件`, `Reverse dependency: component ${from.label} depends on component ${to.label}`);
 }
 
 /** 单元 → 组件的查表，一次建好给整张图的边用。 */
@@ -198,15 +199,15 @@ export function weightToCenter(dto: RelationsDto): Map<number, number> {
 /** 详情条："依赖中心：调用 3；被中心依赖：实现"。中心自己、或与中心没有直接边时给相应说明。 */
 export function relationToCenter(dto: RelationsDto, unitId: number): string {
   const center = dto.focus.id;
-  if (unitId === center) return "这是中心";
+  if (unitId === center) return L("这是中心", "This is the center");
   const out = dto.edges.find((e) => e.from === unitId && e.to === center);
   const inc = dto.edges.find((e) => e.from === center && e.to === unitId);
   const parts: string[] = [];
-  if (inc) parts.push(`中心依赖它：${kindsSummary(inc.kinds)}`);
-  if (out) parts.push(`它依赖中心：${kindsSummary(out.kinds)}`);
-  if (parts.length > 0) return parts.join("；");
+  if (inc) parts.push(L(`中心依赖它：${kindsSummary(inc.kinds)}`, `The center depends on it: ${kindsSummary(inc.kinds)}`));
+  if (out) parts.push(L(`它依赖中心：${kindsSummary(out.kinds)}`, `It depends on the center: ${kindsSummary(out.kinds)}`));
+  if (parts.length > 0) return parts.join(L("；", "; "));
   const d = dto.nodes.find((n) => n.unit.id === unitId)?.distance;
-  return d !== undefined && d >= 2 ? "与中心没有直接关系（隔一层）" : "与中心没有直接关系";
+  return d !== undefined && d >= 2 ? L("与中心没有直接关系（隔一层）", "No direct relation to the center (one step removed)") : L("与中心没有直接关系", "No direct relation to the center");
 }
 
 // ---- cytoscape 元素 ----

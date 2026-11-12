@@ -18,16 +18,16 @@ public static class NarrativeSchema
 
     public static NarrativeBody Parse(string raw, string kind, IReadOnlySet<string> factIds)
     {
-        var text = ExtractJson(raw) ?? throw new NarrativeParseException("回答里没有 JSON 对象");
+        var text = ExtractJson(raw) ?? throw new NarrativeParseException(L("回答里没有 JSON 对象", "The answer contains no JSON object"));
         JsonDocument doc;
         try { doc = JsonDocument.Parse(text); }
-        catch (JsonException ex) { throw new NarrativeParseException("回答不是合法 JSON：" + ex.Message); }
+        catch (JsonException ex) { throw new NarrativeParseException(L("回答不是合法 JSON：", "The answer is not valid JSON: ") + ex.Message); }
         using (doc)
         {
             var root = doc.RootElement;
-            if (root.ValueKind != JsonValueKind.Object) throw new NarrativeParseException("回答的顶层不是对象");
+            if (root.ValueKind != JsonValueKind.Object) throw new NarrativeParseException(L("回答的顶层不是对象", "The top level of the answer is not an object"));
             var summary = root.TryGetProperty("summary", out var s) && s.ValueKind == JsonValueKind.String ? s.GetString()!.Trim() : "";
-            if (summary.Length == 0) throw new NarrativeParseException("回答缺少 summary");
+            if (summary.Length == 0) throw new NarrativeParseException(L("回答缺少 summary", "The answer is missing summary"));
             var keyPoints = ReadPoints(root, "keyPoints", factIds);
             var risks = ReadPoints(root, "risks", factIds);
             string? layout = null;

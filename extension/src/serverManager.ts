@@ -2,6 +2,10 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { accessSync, chmodSync, constants, readFileSync, statSync } from "node:fs";
 import * as path from "node:path";
 import type { Readable } from "node:stream";
+import { L, locale } from "../webview/l10n";
+
+/** 传给服务的界面语言（服务端 Loc 读它）。 */
+export const LocaleEnvVar = "CODEATLAS_LOCALE";
 
 /** 服务启动后向 stdout 打印的第一行形如 {"port":12345}。 */
 export function parsePortLine(line: string): number | null {
@@ -58,11 +62,11 @@ const TargetLabels: Record<string, string> = {
   "win32-arm64": "Windows ARM64",
   "linux-x64": "Linux x64",
   "linux-arm64": "Linux ARM64",
-  "darwin-x64": "macOS（Intel 芯片）",
-  "darwin-arm64": "macOS（Apple 芯片）",
+  "darwin-x64": L("macOS（Intel 芯片）", "macOS (Intel)"),
+  "darwin-arm64": L("macOS（Apple 芯片）", "macOS (Apple Silicon)"),
 };
 
-const targetLabel = (t: string) => (TargetLabels[t] ? `${TargetLabels[t]}（${t}）` : t);
+const targetLabel = (t: string) => (TargetLabels[t] ? L(`${TargetLabels[t]}（${t}）`, `${TargetLabels[t]} (${t})`) : t);
 
 /**
  * 自带服务是给哪个平台打的（打包时写进 server/target.json）。和当前系统不一致时返回给用户看的提示，一致或没有 target.json（开发环境）返回 null。
@@ -77,8 +81,11 @@ export function packageTargetMismatch(bundledDir: string, version: string, platf
   }
   const current = currentTarget(platform, arch);
   if (typeof target !== "string" || target === current) return null;
-  return `CodeTrail Graph：这个安装包是给 ${targetLabel(target)} 的，当前系统是 ${targetLabel(current)}，服务无法启动。`
-    + `请完全退出 VS Code 后安装 codetrail-graph-${current}-${version}.vsix。`;
+  return L(
+    `CodeTrail Graph：这个安装包是给 ${targetLabel(target)} 的，当前系统是 ${targetLabel(current)}，服务无法启动。`
+      + `请完全退出 VS Code 后安装 codetrail-graph-${current}-${version}.vsix。`,
+    `CodeTrail Graph: this package is built for ${targetLabel(target)}, but the current system is ${targetLabel(current)}, so the server cannot start. `
+      + `Quit VS Code completely, then install codetrail-graph-${current}-${version}.vsix.`);
 }
 
 /** 查找顺序：扩展自带的 server/ 目录 → 用户设置 → PATH。返回 null 表示都没有。 */
@@ -255,6 +262,8 @@ export function buildServeLaunch(
   const args = ["serve", repoRoot, "--port", "0", "--parent-pid", String(parentPid), "--token", token, ...extra];
   const key = ai?.enabled && apiKey && apiKey.trim() ? apiKey.trim() : undefined;
   const env: NodeJS.ProcessEnv = key ? { ...baseEnv, [ApiKeyEnvVar]: key } : { ...baseEnv };
+  // 服务端文案（框架流程、容器图、叙述）跟界面同一种语言；codeatlas-roslyn 子进程也继承它
+  env[LocaleEnvVar] = locale() === "zh" ? "zh-cn" : "en";
   let note = "";
   if (ai?.enabled) {
     if (key) note = `（API Key：已设置，经环境变量 ${ApiKeyEnvVar} 传入）`;
@@ -380,7 +389,7 @@ export class ServerManager {
   /** 请求失败后的自动恢复：每个仓库只允许一次。 */
   recover(repoRoot: string): Promise<string> {
     const used = this.restartBudget.get(repoRoot) ?? 0;
-    if (used >= 1) return Promise.reject(new Error("CodeTrail Graph 服务已重启过一次仍不可用，请用命令「CodeTrail Graph: 重启服务」手动重启"));
+    if (used >= 1) return Promise.reject(new Error(L("CodeTrail Graph 服务已重启过一次仍不可用，请用命令「CodeTrail Graph: 重启服务」手动重启", "CodeTrail Graph server is still unavailable after one automatic restart. Run \"CodeTrail Graph: Restart Server\" to restart it manually.")));
     this.restartBudget.set(repoRoot, used + 1);
     this.invalidate(repoRoot);
     return this.ensure(repoRoot);
@@ -414,7 +423,7 @@ export class ServerManager {
 
 export class ServerNotFoundError extends Error {
   constructor() {
-    super("找不到 codeatlas 可执行文件：请在设置 codeatlas.serverPath 中指定，或把它加入 PATH。");
+    super(L("找不到 codeatlas 可执行文件：请在设置 codeatlas.serverPath 中指定，或把它加入 PATH。", "Cannot find the codeatlas executable. Set it in the codeatlas.serverPath setting, or add it to PATH."));
     this.name = "ServerNotFoundError";
   }
 }

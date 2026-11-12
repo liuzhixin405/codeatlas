@@ -81,7 +81,7 @@ public sealed partial class MessagePipeline
         var tailNodes = new List<FlowNodeDto>();
         void CollectTail(FlowNodeDto n)
         {
-            if (n.Actor == FrameworkFlowBuilder.StageTail && n.Note is { } note && note.Contains(" 后置", StringComparison.Ordinal)) { tailNodes.Add(n); return; }
+            if (n.Actor == FrameworkFlowBuilder.StageTail && n.Note is { } note && note.Contains(FrameworkFlowBuilder.BehaviorPostSuffix, StringComparison.Ordinal)) { tailNodes.Add(n); return; }
             foreach (var c in n.Children) CollectTail(c);
         }
         CollectTail(framework.Flow.Root);
@@ -144,7 +144,7 @@ public sealed partial class MessagePipeline
             var name = MapBuilder.StripGenericArgs(type.Name);
             // 最后一个 next() 是 return await next()（全在 if 分支里，ApprovalBehavior 那种）：它之后的调用是"不放行"那条路（建审批任务后直接返回），不在 Handler 之后执行
             var post = method is not null && !OutlineBuilder.IsType(method.Kind) && LastNextReturns(Lines(method)) ? []
-                : tailNodes.Where(n => n.Note!.StartsWith(name + " 后置", StringComparison.Ordinal)).ToList();
+                : tailNodes.Where(n => n.Note!.StartsWith(name + FrameworkFlowBuilder.BehaviorPostSuffix, StringComparison.Ordinal)).ToList();
             behaviors.Add(new BehaviorInfo(node, name, requires.Distinct(StringComparer.Ordinal).ToList(), deps, reflective, post));
         }
         if (behaviors.Count == 0) return null;
@@ -264,7 +264,7 @@ public sealed partial class MessagePipeline
         {
             // 消息不在符号表里（外部类型）时不判断守卫，按生效画
             var missing = ifaces is null ? [] : b.Requires.Where(r => !ifaces.Contains(r)).ToList();
-            if (missing.Count > 0) { skipped.Add($"{b.Name}（{message} 没实现 {string.Join(" / ", missing)}）"); continue; }
+            if (missing.Count > 0) { skipped.Add(L($"{b.Name}（{message} 没实现 {string.Join(" / ", missing)}）", $"{b.Name} ({message} does not implement {string.Join(" / ", missing)})")); continue; }
             var comps = new List<PipelineComponent>();
             if (_componentsByMessage.TryGetValue(message, out var list))
                 foreach (var (type, baseName) in list)
@@ -313,15 +313,15 @@ public sealed partial class MessagePipeline
                             foreach (var x in s.Components)
                             {
                                 var how = x.Via is null
-                                    ? $"对应 {x.Dependency}<…>；源码里没有直接调用，由 DI 扫描 / 反射接上"
-                                    : $"{x.Via} 里按消息类型反射解析 {x.Dependency}<…>（MakeGenericType）；源码里没有直接调用";
+                                    ? L($"对应 {x.Dependency}<…>；源码里没有直接调用，由 DI 扫描 / 反射接上", $"matches {x.Dependency}<…>; not called directly in source, wired up by DI scanning / reflection")
+                                    : L($"{x.Via} 里按消息类型反射解析 {x.Dependency}<…>（MakeGenericType）；源码里没有直接调用", $"{x.Via} resolves {x.Dependency}<…> by message type via reflection (MakeGenericType); not called directly in source");
                                 var comp = new FlowNodeDto(x.Type.Id, MapBuilder.StripGenericArgs(x.Type.Name), x.Type.QualifiedName, "call", c.Actor, null, 1.0, 1, 0, [], 0,
-                                    $"按消息类型注入：{x.Base}<{message}>（{how}）", x.Type.Path, x.Type.StartLine);
+                                    L($"按消息类型注入：{x.Base}<{message}>（{how}）", $"Injected by message type: {x.Base}<{message}> ({how})"), x.Type.Path, x.Type.StartLine);
                                 var at = own.FindIndex(k => k.Label.StartsWith((x.Via ?? x.Dependency) + ".", StringComparison.Ordinal));
                                 if (at >= 0) own[at] = own[at] with { Children = [.. own[at].Children, comp] };
                                 else loose.Add(comp);
                             }
-                            var note = $"管道 {i + 1}/{steps.Count} · {s.Behavior.Note}";
+                            var note = L($"管道 {i + 1}/{steps.Count} · {s.Behavior.Note}", $"Pipeline {i + 1}/{steps.Count} · {s.Behavior.Note}");
                             var count = 0;
                             kids.Add(FrameworkFlowBuilder.Redepth(new FlowNodeDto(s.Behavior.SymbolId, s.Behavior.Label, s.Behavior.QualifiedName, "call", c.Actor, null, 1.0, 1, 0,
                                 [.. own, .. loose], 0, note, s.Behavior.Path, s.Behavior.Line), c.Depth, ref count));
@@ -351,7 +351,7 @@ public sealed partial class MessagePipeline
             if ((!sawDispatch || sawPipeline) && flow.Behaviors.Count > 0) return flow with { Behaviors = [] };
             return flow;
         }
-        var skipNote = skippedAll.Count == 0 ? null : "管道里跳过：" + string.Join("；", skippedAll);
+        var skipNote = skippedAll.Count == 0 ? null : L("管道里跳过：", "Skipped in pipeline: ") + string.Join(L("；", "; "), skippedAll);
         var note = flow.Note is null ? skipNote : skipNote is null ? flow.Note : flow.Note + "\n" + skipNote;
         return flow with { Root = root, Behaviors = applied, Nodes = flow.Nodes + added, Note = note };
     }

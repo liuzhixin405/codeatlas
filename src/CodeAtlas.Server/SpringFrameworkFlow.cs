@@ -86,7 +86,7 @@ public static partial class SpringFrameworkFlow
         {
             var kids = CallPath is null ? new List<FlowNodeDto>() : w.CallNodes(Pre, CallPath, actor);
             kids.AddRange(Inner.Select(i => i.ToNode(w, actor)));
-            return Node(Kind == "call" ? SymbolId : null, Label, QualifiedName, Kind, actor, Notes.Count == 0 ? null : string.Join("；", Notes), Cap(kids, actor), Path, Line);
+            return Node(Kind == "call" ? SymbolId : null, Label, QualifiedName, Kind, actor, Notes.Count == 0 ? null : string.Join(L("；", "; "), Notes), Cap(kids, actor), Path, Line);
         }
 
         /// <summary>自己与里面的（安全链里的过滤器），进入顺序。</summary>
@@ -157,7 +157,7 @@ public static partial class SpringFrameworkFlow
             if (w.MethodIn(t, "beforeBodyWrite") is { } m)
             {
                 tailSymbols.Add(m);
-                bodyAdvice.Add(Node(m.Id, $"{World.ShortName(t)}.beforeBodyWrite", m.QualifiedName, "call", StageTail, "控制器返回后、写响应体之前（ResponseBodyAdvice）",
+                bodyAdvice.Add(Node(m.Id, $"{World.ShortName(t)}.beforeBodyWrite", m.QualifiedName, "call", StageTail, L("控制器返回后、写响应体之前（ResponseBodyAdvice）", "after the controller returns, before the response body is written (ResponseBodyAdvice)"),
                     w.CallNodes(w.Calls(m), m.Path, StageTail), m.Path, m.StartLine));
             }
         var (exceptionNodes, exceptionSymbols) = ExceptionHandlers(w, exceptionResolvers);
@@ -182,12 +182,12 @@ public static partial class SpringFrameworkFlow
             if (gatewayUnit is not null)
             {
                 var g = gatewayUnit.ToNode(w, StageMiddleware);
-                var posts = Enumerable.Reverse(gatewayUnit.Inner).SelectMany(u => u.Post.Where(JavaKeep).Select(c => CallNode(c, u.CallPath, StageTail, $"{u.Owner} 后置"))).ToList();
+                var posts = Enumerable.Reverse(gatewayUnit.Inner).SelectMany(u => u.Post.Where(JavaKeep).Select(c => CallNode(c, u.CallPath, StageTail, L($"{u.Owner} 后置", $"{u.Owner} after")))).ToList();
                 dispatcherKids.Add(g with { Children = [.. g.Children, .. posts] });
             }
             if (http.Count > 0)
             {
-                entryNode = Node(null, "控制器", "", "controllers", StageController, null, controllerKids, null, null, http.Count);
+                entryNode = Node(null, L("控制器", "Controllers"), "", "controllers", StageController, null, controllerKids, null, null, http.Count);
                 dispatcherKids.Add(entryNode);
             }
             else dispatcherKids.AddRange(controllerKids);
@@ -195,16 +195,16 @@ public static partial class SpringFrameworkFlow
             foreach (var u in Enumerable.Reverse(interceptors)) dispatcherKids.AddRange(u.Exits);
             dispatcherKids.AddRange(exceptionNodes);
             foreach (var u in Enumerable.Reverse(interceptors)) dispatcherKids.AddRange(u.After);
-            var dispatcherLabel = reactive ? "DispatcherHandler（Spring WebFlux 内置）" : "DispatcherServlet（Spring 内置）";
+            var dispatcherLabel = reactive ? L("DispatcherHandler（Spring WebFlux 内置）", "DispatcherHandler (built into Spring WebFlux)") : L("DispatcherServlet（Spring 内置）", "DispatcherServlet (built into Spring)");
             var dispatcherNote = reactive
-                ? "WebFlux 的分派器：WebFilter 之后进来，按路由找到处理函数" + (gateway ? "；路由转发的请求交给网关过滤器链，本服务自己的接口走控制器" : "")
-                : "Spring MVC 的前端控制器：过滤器之后进来，按 @RequestMapping 找到控制器方法，前后跑拦截器，出错交给 @ExceptionHandler";
+                ? L("WebFlux 的分派器：WebFilter 之后进来，按路由找到处理函数", "WebFlux dispatcher: entered after the WebFilters, finds the handler function by route") + (gateway ? L("；路由转发的请求交给网关过滤器链，本服务自己的接口走控制器", "; routed requests go to the gateway filter chain, this service's own endpoints go to controllers") : "")
+                : L("Spring MVC 的前端控制器：过滤器之后进来，按 @RequestMapping 找到控制器方法，前后跑拦截器，出错交给 @ExceptionHandler", "Spring MVC front controller: entered after the filters, finds the controller method by @RequestMapping, runs interceptors around it, and hands errors to @ExceptionHandler");
             rootKids.Add(Node(null, dispatcherLabel, "", "external-group", StageDispatcher, dispatcherNote, dispatcherKids, null, null));
             // 过滤器后置：洋葱往回走
             foreach (var u in Enumerable.Reverse(filterFlat))
                 foreach (var c in u.Post.Where(JavaKeep))
                 {
-                    rootKids.Add(CallNode(c, u.CallPath, StageTail, $"{u.Owner} 后置"));
+                    rootKids.Add(CallNode(c, u.CallPath, StageTail, L($"{u.Owner} 后置", $"{u.Owner} after")));
                     if (c.TargetId is { } tid && w.ById.TryGetValue(tid, out var ts) && ts.Kind != SymbolKind.External) tailSymbols.Add(ts);
                 }
         }
@@ -213,7 +213,7 @@ public static partial class SpringFrameworkFlow
             var others = entries.Count;
             if (others > 0)
             {
-                entryNode = Node(null, "入口（常驻服务 / 任务 / 消息消费）", "", "controllers", StageController, null, controllerKids, null, null, others);
+                entryNode = Node(null, L("入口（常驻服务 / 任务 / 消息消费）", "Entry (hosted services / jobs / message consumers)"), "", "controllers", StageController, null, controllerKids, null, null, others);
                 rootKids.Add(entryNode);
             }
             else rootKids.AddRange(controllerKids);
@@ -227,16 +227,16 @@ public static partial class SpringFrameworkFlow
         if (present.Contains(StageMiddleware))
         {
             var syms = filterFlat.Concat(gatewayUnit?.Inner ?? []).Select(u => u.Symbol).Where(s => s is not null).DistinctBy(s => s!.Id).Select(s => w.Dto(s!)).ToList();
-            stages.Add(new FrameworkStageDto(StageMiddleware, "过滤器", filterOrderKnown, syms));
+            stages.Add(new FrameworkStageDto(StageMiddleware, L("过滤器", "Filters"), filterOrderKnown, syms));
         }
-        if (present.Contains(StageDispatcher)) stages.Add(new FrameworkStageDto(StageDispatcher, "分派器", true, []));
+        if (present.Contains(StageDispatcher)) stages.Add(new FrameworkStageDto(StageDispatcher, L("分派器", "Dispatcher"), true, []));
         if (present.Contains(StageInterceptor))
-            stages.Add(new FrameworkStageDto(StageInterceptor, "拦截器", interceptorsOrderKnown,
+            stages.Add(new FrameworkStageDto(StageInterceptor, L("拦截器", "Interceptors"), interceptorsOrderKnown,
                 interceptors.Select(u => u.Symbol).Where(s => s is not null).DistinctBy(s => s!.Id).Select(s => w.Dto(s!)).ToList()));
         if (entryNode is not null)
-            stages.Add(new FrameworkStageDto(StageController, isWeb ? "控制器" : "入口", true,
+            stages.Add(new FrameworkStageDto(StageController, isWeb ? L("控制器", "Controllers") : L("入口", "Entry"), true,
                 (isWeb ? http : entries).Select(e => w.ById.GetValueOrDefault(e.SymbolId)).Where(s => s is not null).DistinctBy(s => s!.Id).Select(s => w.Dto(s!)).ToList()));
-        if (present.Contains(StageAspect)) stages.Add(new FrameworkStageDto(StageAspect, "切面", aspectsOrderKnown, aspectSymbols.DistinctBy(s => s.Id).Select(w.Dto).ToList()));
+        if (present.Contains(StageAspect)) stages.Add(new FrameworkStageDto(StageAspect, L("切面", "Aspects"), aspectsOrderKnown, aspectSymbols.DistinctBy(s => s.Id).Select(w.Dto).ToList()));
         if (present.Contains(StageTail))
         {
             void TailSyms(FlowNodeDto n)
@@ -245,33 +245,34 @@ public static partial class SpringFrameworkFlow
                 foreach (var c in n.Children) TailSyms(c);
             }
             foreach (var k in rootKids) TailSyms(k);
-            stages.Add(new FrameworkStageDto(StageTail, "收尾", filterOrderKnown && interceptorsOrderKnown && aspectsOrderKnown, tailSymbols.DistinctBy(s => s.Id).Select(w.Dto).ToList()));
+            stages.Add(new FrameworkStageDto(StageTail, L("收尾", "Teardown"), filterOrderKnown && interceptorsOrderKnown && aspectsOrderKnown, tailSymbols.DistinctBy(s => s.Id).Select(w.Dto).ToList()));
         }
 
         // ---- Notes ----
-        if (!isWeb) notes.Add("这个容器不是 Web 服务（没有 HTTP 入口、没有 spring-boot-starter-web / webflux 依赖，也没认出过滤器 / 拦截器）：入口是常驻服务 / 任务 / 消息消费");
+        if (!isWeb) notes.Add(L("这个容器不是 Web 服务（没有 HTTP 入口、没有 spring-boot-starter-web / webflux 依赖，也没认出过滤器 / 拦截器）：入口是常驻服务 / 任务 / 消息消费", "This container is not a web service (no HTTP entry points, no spring-boot-starter-web / webflux dependency, and no recognized filters / interceptors): entry points are hosted services / jobs / message consumers"));
         else
         {
-            notes.Add(reactive ? "Spring WebFlux" + (gateway ? " + Spring Cloud Gateway" : "") + "：WebFilter → DispatcherHandler → 处理函数（没有 HandlerInterceptor）"
-                               : "Spring MVC：过滤器 → DispatcherServlet → 拦截器 → 控制器（切面包在 Bean 方法外面）");
+            notes.Add(reactive ? "Spring WebFlux" + (gateway ? " + Spring Cloud Gateway" : "") + L("：WebFilter → DispatcherHandler → 处理函数（没有 HandlerInterceptor）", ": WebFilter → DispatcherHandler → handler function (no HandlerInterceptor)")
+                               : L("Spring MVC：过滤器 → DispatcherServlet → 拦截器 → 控制器（切面包在 Bean 方法外面）", "Spring MVC: filters → DispatcherServlet → interceptors → controllers (aspects wrap bean methods)"));
             notes.AddRange(filterNotes);
             if (!reactive) notes.AddRange(interceptorNotes);
             notes.AddRange(gatewayNotes);
             var serverDep = deps.FirstOrDefault(d => d.Contains("config-server", StringComparison.Ordinal) || d.Contains("eureka-server", StringComparison.Ordinal) || d.Contains("admin-starter-server", StringComparison.Ordinal));
             if (http.Count == 0)
-                notes.Add("没有发现 HTTP 入口（@RestController / @Controller / 路由函数）" + (gateway ? "：网关只做路由转发" : serverDep is not null ? $"：接口由框架提供（{serverDep}）" : ""));
+                notes.Add(L("没有发现 HTTP 入口（@RestController / @Controller / 路由函数）", "No HTTP entry points found (@RestController / @Controller / router functions)") + (gateway ? L("：网关只做路由转发", ": the gateway only routes requests") : serverDep is not null ? L($"：接口由框架提供（{serverDep}）", $": endpoints are provided by the framework ({serverDep})") : ""));
             var nonHttp = entries.Count - http.Count;
-            if (nonHttp > 0) notes.Add($"另有 {nonHttp} 个非 HTTP 入口（main / @Scheduled / 消息监听），没画在这条请求链上");
+            if (nonHttp > 0) notes.Add(L($"另有 {nonHttp} 个非 HTTP 入口（main / @Scheduled / 消息监听），没画在这条请求链上", $"Plus {Plural(nonHttp, "non-HTTP entry point", "non-HTTP entry points")} (main / @Scheduled / message listeners), not drawn in this request pipeline"));
         }
         notes.AddRange(aspectNotes);
-        if (transactional is null) notes.Add("没有发现 @Transactional");
-        if (exceptionNodes.Count == 0 && isWeb && !reactive) notes.Add("没有发现异常处理（@ControllerAdvice / @RestControllerAdvice 里的 @ExceptionHandler、HandlerExceptionResolver）：出错走 Spring Boot 默认的 /error");
-        if (!present.Contains(StageTail)) notes.Add("没有发现收尾（过滤器 / 拦截器 / 切面的后置、@Transactional、异常处理）");
+        if (transactional is null) notes.Add(L("没有发现 @Transactional", "No @Transactional found"));
+        if (exceptionNodes.Count == 0 && isWeb && !reactive) notes.Add(L("没有发现异常处理（@ControllerAdvice / @RestControllerAdvice 里的 @ExceptionHandler、HandlerExceptionResolver）：出错走 Spring Boot 默认的 /error", "No exception handling found (@ExceptionHandler in @ControllerAdvice / @RestControllerAdvice, HandlerExceptionResolver): errors go to Spring Boot's default /error"));
+        if (!present.Contains(StageTail)) notes.Add(L("没有发现收尾（过滤器 / 拦截器 / 切面的后置、@Transactional、异常处理）", "No teardown found (after-steps of filters / interceptors / aspects, @Transactional, exception handling)"));
         if (rootKids.Count == 0) return Empty(container, notes);
 
         var rootActor = rootKids[0].Actor;
-        var root = Node(null, isWeb ? "HTTP 请求" : "入口", "", "entry", rootActor, null, rootKids, null, null);
-        return Assemble(container, isWeb ? "HTTP 请求" : "入口", root, stages, [], notes, isWeb ? "HTTP 请求" : "入口");
+        var rootLabel = isWeb ? L("HTTP 请求", "HTTP request") : L("入口", "Entry");
+        var root = Node(null, rootLabel, "", "entry", rootActor, null, rootKids, null, null);
+        return Assemble(container, rootLabel, root, stages, [], notes, rootLabel);
     }
 
     // ================= 过滤器 =================
@@ -333,18 +334,18 @@ public static partial class SpringFrameworkFlow
                     foreach (Match u in Regex.Matches(body, @"\.\s*(?:addUrlPatterns|setUrlPatterns)\s*\("))
                         urls.AddRange(World.Literals(World.RawArgs(t.Code, t.Raw, span.Start + u.Index + 1)));
                     var disabled = Regex.IsMatch(body, @"\.\s*setEnabled\s*\(\s*false\s*\)");
-                    regs.Add(new Registration(pick.Name, $"FilterRegistrationBean（{where}）", order, orderHow, m.Path, m.StartLine, urls, disabled, pick.Anonymous, m));
+                    regs.Add(new Registration(pick.Name, L($"FilterRegistrationBean（{where}）", $"FilterRegistrationBean ({where})"), order, orderHow, m.Path, m.StartLine, urls, disabled, pick.Anonymous, m));
                     continue;
                 }
             }
             // @Bean 方法返回过滤器
             if (w.Annotation(m, "Bean") is null || w.ReturnType(m) is not { } rt) continue;
             var (beanOrder, beanHow) = w.Annotation(m, "Order") is { } oa && w.EvalOrder(JavaSource.Keyword(oa.Args, "value") ?? oa.Args, m.Path) is { } ov
-                ? ((long?)ov, $"@Bean 上的 @Order({OrderText(ov)})") : ((long?)null, (string?)null);
-            if (filterNames.Contains(rt)) regs.Add(new Registration(rt, $"@Bean {World.ShortName(m)}()（{where}）", beanOrder, beanHow, m.Path, m.StartLine, [], false, false, m));
+                ? ((long?)ov, L($"@Bean 上的 @Order({OrderText(ov)})", $"@Order({OrderText(ov)}) on the @Bean")) : ((long?)null, (string?)null);
+            if (filterNames.Contains(rt)) regs.Add(new Registration(rt, L($"@Bean {World.ShortName(m)}()（{where}）", $"@Bean {World.ShortName(m)}() ({where})"), beanOrder, beanHow, m.Path, m.StartLine, [], false, false, m));
             else if (rt is "Filter" or "WebFilter") lambdaBeans.Add((m, beanOrder, beanHow));
             else if (rt.EndsWith("Filter", StringComparison.Ordinal) && rt != "GlobalFilter" && !w.TypeByName.ContainsKey(rt))
-                regs.Add(new Registration(rt, $"@Bean {World.ShortName(m)}()（{where}）", beanOrder, beanHow, m.Path, m.StartLine, [], false, false, m));
+                regs.Add(new Registration(rt, L($"@Bean {World.ShortName(m)}()（{where}）", $"@Bean {World.ShortName(m)}() ({where})"), beanOrder, beanHow, m.Path, m.StartLine, [], false, false, m));
         }
 
         // Spring Security：链在哪、addFilterBefore / After / At 加了谁
@@ -357,8 +358,8 @@ public static partial class SpringFrameworkFlow
             var code = t.Code;
             foreach (Match m in SecurityChainBean.Matches(code))
                 if (reactive == (m.Groups[1].Value == "SecurityWebFilterChain"))
-                    securityWhere ??= $"{m.Groups[1].Value} {m.Groups[2].Value}()（{World.FileName(path)}:{World.LineAt(code, m.Index)}）";
-            if (!reactive && SecurityAdapter.Match(code) is { Success: true } a) securityWhere ??= $"WebSecurityConfigurerAdapter（{World.FileName(path)}:{World.LineAt(code, a.Index)}）";
+                    securityWhere ??= L($"{m.Groups[1].Value} {m.Groups[2].Value}()（{World.FileName(path)}:{World.LineAt(code, m.Index)}）", $"{m.Groups[1].Value} {m.Groups[2].Value}() ({World.FileName(path)}:{World.LineAt(code, m.Index)})");
+            if (!reactive && SecurityAdapter.Match(code) is { Success: true } a) securityWhere ??= L($"WebSecurityConfigurerAdapter（{World.FileName(path)}:{World.LineAt(code, a.Index)}）", $"WebSecurityConfigurerAdapter ({World.FileName(path)}:{World.LineAt(code, a.Index)})");
             if (!code.Contains("HttpSecurity", StringComparison.Ordinal)) continue;
             // http.csrf().disable().cors().and()… / http.csrf(c -> c.disable())：记下配了哪些内置功能
             foreach (Match r in Regex.Matches(code, @"\b(?:Server)?HttpSecurity\s+(\w+)\s*[,)]"))
@@ -368,7 +369,7 @@ public static partial class SpringFrameworkFlow
                 {
                     if (!SecurityDsl.Contains(calls[i].Name)) continue;
                     var off = i + 1 < calls.Count && calls[i + 1].Name == "disable" || Regex.IsMatch(calls[i].Args, @"\.\s*disable\s*\(|AbstractHttpConfigurer\s*::\s*disable");
-                    var item = calls[i].Name + (off ? "（关闭）" : "");
+                    var item = calls[i].Name + (off ? L("（关闭）", " (disabled)") : "");
                     if (!securityDsl.Contains(item)) securityDsl.Add(item);
                 }
             }
@@ -404,12 +405,12 @@ public static partial class SpringFrameworkFlow
             };
             if (main is not null)
             {
-                if (main.ParentId != cls.Id && w.Owner(main) is { } o) u.Notes.Add($"方法写在父类 {World.ShortName(o)}");
+                if (main.ParentId != cls.Id && w.Owner(main) is { } o) u.Notes.Add(L($"方法写在父类 {World.ShortName(o)}", $"method defined in base class {World.ShortName(o)}"));
                 var split = w.SplitAtChain(main, chainTypes, chainMembers);
                 u.Pre = split.Pre;
                 u.Post = split.Post;
-                if (split.Conditional) u.Notes.Add("有条件（有分支不往下传直接返回）");
-                if (!split.HasChain) u.Notes.Add(reactive ? "没找到 chain.filter(exchange) 调用" : "没找到 chain.doFilter(…) 调用（请求可能到此为止）");
+                if (split.Conditional) u.Notes.Add(L("有条件（有分支不往下传直接返回）", "conditional (some branches return without passing the request on)"));
+                if (!split.HasChain) u.Notes.Add(reactive ? L("没找到 chain.filter(exchange) 调用", "no chain.filter(exchange) call found") : L("没找到 chain.doFilter(…) 调用（请求可能到此为止）", "no chain.doFilter(…) call found (the request may stop here)"));
             }
             return u;
         }
@@ -421,13 +422,13 @@ public static partial class SpringFrameworkFlow
         {
             security = new Unit
             {
-                Label = "Spring Security 过滤器链", Owner = "Spring Security", Kind = "external-group", Order = SecurityOrder, OrderHow = "Spring Security 默认 order -100", Seq = seq++,
+                Label = L("Spring Security 过滤器链", "Spring Security filter chain"), Owner = "Spring Security", Kind = "external-group", Order = SecurityOrder, OrderHow = L("Spring Security 默认 order -100", "Spring Security default order -100"), Seq = seq++,
             };
-            security.Notes.Add(securityWhere ?? (securityDep ? "依赖 spring-boot-starter-security，没找到 SecurityFilterChain 配置（用默认的那套）" : "HttpSecurity 配置"));
-            security.Notes.Add(reactive ? "WebFilterChainProxy，order -100" : "DelegatingFilterProxy → FilterChainProxy，order -100（认证、授权、CSRF 等内置过滤器在里面）");
+            security.Notes.Add(securityWhere ?? (securityDep ? L("依赖 spring-boot-starter-security，没找到 SecurityFilterChain 配置（用默认的那套）", "depends on spring-boot-starter-security; no SecurityFilterChain configuration found (uses the defaults)") : L("HttpSecurity 配置", "HttpSecurity configuration")));
+            security.Notes.Add(reactive ? L("WebFilterChainProxy，order -100", "WebFilterChainProxy, order -100") : L("DelegatingFilterProxy → FilterChainProxy，order -100（认证、授权、CSRF 等内置过滤器在里面）", "DelegatingFilterProxy → FilterChainProxy, order -100 (contains built-in filters for authentication, authorization, CSRF, etc.)"));
             foreach (var add in securityAdds.OrderBy(a => a.Path, StringComparer.Ordinal).ThenBy(a => a.Pos))
             {
-                var where = $"{add.How}（{World.FileName(add.Path)}:{add.Line}）";
+                var where = L($"{add.How}（{World.FileName(add.Path)}:{add.Line}）", $"{add.How} ({World.FileName(add.Path)}:{add.Line})");
                 if (add.Type is { } tn && byName.TryGetValue(tn, out var cls) && !add.Anonymous)
                 {
                     var u = RepoFilter(cls);
@@ -438,20 +439,20 @@ public static partial class SpringFrameworkFlow
                     var bean = w.Annotation(cls, ComponentAnnotations) is { } comp ? "@" + comp.Name
                         : regs.FirstOrDefault(r => r.TypeName == tn && r.How.StartsWith("@Bean", StringComparison.Ordinal)) is { } br ? br.How : null;
                     if (bean is not null && !regs.Any(r => r.TypeName == tn && r.Disabled))
-                        u.Notes.Add($"同时是 {bean}：Spring Boot 还会把它注册成普通 Servlet 过滤器" + (w.Supers(cls).Contains("OncePerRequestFilter") ? "（OncePerRequestFilter 会跳过第二次）" : "，会执行两次"));
+                        u.Notes.Add(L($"同时是 {bean}：Spring Boot 还会把它注册成普通 Servlet 过滤器", $"also a {bean}: Spring Boot also registers it as a regular servlet filter") + (w.Supers(cls).Contains("OncePerRequestFilter") ? L("（OncePerRequestFilter 会跳过第二次）", " (OncePerRequestFilter skips the second run)") : L("，会执行两次", ", so it runs twice")));
                     security.Inner.Add(u);
                     inSecurity.Add(tn);
                 }
                 else
                 {
-                    var label = add.Anonymous ? $"匿名 {add.Type}" : add.Type ?? add.Expr;
+                    var label = add.Anonymous ? L($"匿名 {add.Type}", $"anonymous {add.Type}") : add.Type ?? add.Expr;
                     var u = new Unit { Label = label, Owner = label, Kind = "external-group", Path = add.Path, Line = add.Line, Seq = seq++ };
                     u.Notes.Add(where);
                     security.Inner.Add(u);
                 }
             }
-            if (securityDsl.Count > 0) security.Notes.Add("配置了 " + string.Join("、", securityDsl));
-            if (security.Inner.Count > 1) security.Notes.Add("自研过滤器按 addFilterXxx 的书写顺序画（实际位置由锚点过滤器决定）");
+            if (securityDsl.Count > 0) security.Notes.Add(L("配置了 ", "configured: ") + string.Join(ListSep, securityDsl));
+            if (security.Inner.Count > 1) security.Notes.Add(L("自研过滤器按 addFilterXxx 的书写顺序画（实际位置由锚点过滤器决定）", "custom filters drawn in addFilterXxx call order (the actual position depends on the anchor filter)"));
             units.Add(security);
         }
 
@@ -464,7 +465,7 @@ public static partial class SpringFrameworkFlow
             var webFilter = w.Annotation(cls, "WebFilter");
             if (own.Count > 0 && active.Count == 0)
             {
-                notes.Add($"{name} 的 FilterRegistrationBean 写了 setEnabled(false)：不作为 Servlet 过滤器注册" + (inSecurity.Contains(name) ? "（只在 Security 链里）" : ""));
+                notes.Add(L($"{name} 的 FilterRegistrationBean 写了 setEnabled(false)：不作为 Servlet 过滤器注册", $"{name}'s FilterRegistrationBean calls setEnabled(false): not registered as a servlet filter") + (inSecurity.Contains(name) ? L("（只在 Security 链里）", " (only in the Security chain)") : ""));
                 continue;
             }
             // 在 Security 链里、另外只是个 Bean：只画在链里（显式的 FilterRegistrationBean 才另画一行）
@@ -476,31 +477,31 @@ public static partial class SpringFrameworkFlow
                 u.Notes.Insert(0, reg.How);
                 u.Path = reg.Path;
                 u.Line = reg.Line;
-                if (reg.Urls.Count > 0) u.Notes.Add("路径 " + string.Join(", ", reg.Urls));
+                if (reg.Urls.Count > 0) u.Notes.Add(L("路径 ", "paths ") + string.Join(", ", reg.Urls));
             }
-            else if (component is not null) u.Notes.Insert(0, $"@{component.Name}（{World.FileName(cls.Path)}:{cls.StartLine}）");
+            else if (component is not null) u.Notes.Insert(0, L($"@{component.Name}（{World.FileName(cls.Path)}:{cls.StartLine}）", $"@{component.Name} ({World.FileName(cls.Path)}:{cls.StartLine})"));
             else if (webFilter is not null)
             {
-                u.Notes.Insert(0, $"@WebFilter（{World.FileName(cls.Path)}:{cls.StartLine}，要 @ServletComponentScan）");
+                u.Notes.Insert(0, L($"@WebFilter（{World.FileName(cls.Path)}:{cls.StartLine}，要 @ServletComponentScan）", $"@WebFilter ({World.FileName(cls.Path)}:{cls.StartLine}, requires @ServletComponentScan)"));
                 var urls = World.Literals(webFilter.Args ?? "");
-                if (urls.Count > 0) u.Notes.Add("路径 " + string.Join(", ", urls));
+                if (urls.Count > 0) u.Notes.Add(L("路径 ", "paths ") + string.Join(", ", urls));
             }
             else
             {
                 u.Registered = false;
-                u.Notes.Insert(0, "没找到注册位置（@Component / @Bean / FilterRegistrationBean / addFilterBefore），可能没生效，顺序未知");
+                u.Notes.Insert(0, L("没找到注册位置（@Component / @Bean / FilterRegistrationBean / addFilterBefore），可能没生效，顺序未知", "no registration found (@Component / @Bean / FilterRegistrationBean / addFilterBefore); may not be active, order unknown"));
             }
             var (typeOrder, typeHow) = w.TypeOrder(cls);
             (u.Order, u.OrderHow) = reg?.Order is not null ? (reg.Order, reg.OrderHow) : (typeOrder, typeHow);
-            if (webFilter is not null && reg is null && component is null) (u.Order, u.OrderHow) = (null, "@WebFilter 不认 @Order（Servlet 容器按扫描顺序）");
+            if (webFilter is not null && reg is null && component is null) (u.Order, u.OrderHow) = (null, L("@WebFilter 不认 @Order（Servlet 容器按扫描顺序）", "@WebFilter ignores @Order (the servlet container uses scan order)"));
             units.Add(u);
         }
         // 框架过滤器（@Bean / FilterRegistrationBean 里 new 的）
         foreach (var r in regs.Where(r => !byName.ContainsKey(r.TypeName) && !r.Disabled))
         {
-            var u = new Unit { Label = r.Anonymous ? $"匿名 {r.TypeName}" : r.TypeName, Owner = r.TypeName, Kind = "external-group", Order = r.Order, OrderHow = r.OrderHow, Path = r.Path, Line = r.Line, Seq = seq++ };
-            u.Notes.Add($"框架 / 第三方过滤器，{r.How}");
-            if (r.Urls.Count > 0) u.Notes.Add("路径 " + string.Join(", ", r.Urls));
+            var u = new Unit { Label = r.Anonymous ? L($"匿名 {r.TypeName}", $"anonymous {r.TypeName}") : r.TypeName, Owner = r.TypeName, Kind = "external-group", Order = r.Order, OrderHow = r.OrderHow, Path = r.Path, Line = r.Line, Seq = seq++ };
+            u.Notes.Add(L($"框架 / 第三方过滤器，{r.How}", $"framework / third-party filter, {r.How}"));
+            if (r.Urls.Count > 0) u.Notes.Add(L("路径 ", "paths ") + string.Join(", ", r.Urls));
             units.Add(u);
         }
         // @Bean 返回 Filter / WebFilter 本身（lambda / 匿名类）：挂那个 @Bean 方法
@@ -512,27 +513,27 @@ public static partial class SpringFrameworkFlow
                 Label = w.MemberLabel(m), Owner = World.ShortName(m) + "()", SymbolId = m.Id, QualifiedName = m.QualifiedName, Order = order, OrderHow = how,
                 Path = m.Path, Line = m.StartLine, CallPath = m.Path, Pre = split.Pre, Post = split.Post, Symbol = m, Seq = seq++,
             };
-            u.Notes.Add($"@Bean 返回的 {w.ReturnType(m)}（lambda / 匿名类，{World.FileName(m.Path)}:{m.StartLine}）");
+            u.Notes.Add(L($"@Bean 返回的 {w.ReturnType(m)}（lambda / 匿名类，{World.FileName(m.Path)}:{m.StartLine}）", $"{w.ReturnType(m)} returned by a @Bean (lambda / anonymous class, {World.FileName(m.Path)}:{m.StartLine})"));
             units.Add(u);
         }
 
         units = units.OrderBy(u => u.Registered ? 0 : 1).ThenBy(u => u.Effective).ThenBy(u => u.Seq).ToList();
-        foreach (var u in units.Where(u => u != security && u.OrderHow is not null)) u.Notes.Add("顺序 " + u.OrderHow);
+        foreach (var u in units.Where(u => u != security && u.OrderHow is not null)) u.Notes.Add(L("顺序 ", "order: ") + u.OrderHow);
         var registered = units.Where(u => u.Registered).ToList();
         var ties = registered.GroupBy(u => u.Effective).Where(g => g.Count() > 1).ToList();
         var orderKnown = registered.Count == units.Count && ties.Count == 0;
 
         if (units.Count == 0)
-            notes.Insert(0, reactive ? "没有发现自研 WebFilter（implements WebFilter）" : "没有发现自研过滤器（implements Filter / extends OncePerRequestFilter、GenericFilterBean）");
+            notes.Insert(0, reactive ? L("没有发现自研 WebFilter（implements WebFilter）", "No custom WebFilter found (implements WebFilter)") : L("没有发现自研过滤器（implements Filter / extends OncePerRequestFilter、GenericFilterBean）", "No custom filters found (implements Filter / extends OncePerRequestFilter, GenericFilterBean)"));
         else
         {
-            var basis = "过滤器按 FilterRegistrationBean.setOrder / @Order / Ordered.getOrder 排（小的在外层先执行），没写顺序的按 LOWEST_PRECEDENCE 排在后面";
-            if (ties.Count > 0) basis += "；" + string.Join("、", ties.Select(g => string.Join(" 与 ", g.Select(u => u.Owner)) + $" 同为 {OrderText(g.Key)}")) + "，它们之间的先后不确定";
-            if (registered.Count < units.Count) basis += $"；{units.Count - registered.Count} 个过滤器没找到注册位置，排在最后";
+            var basis = L("过滤器按 FilterRegistrationBean.setOrder / @Order / Ordered.getOrder 排（小的在外层先执行），没写顺序的按 LOWEST_PRECEDENCE 排在后面", "Filters are ordered by FilterRegistrationBean.setOrder / @Order / Ordered.getOrder (smaller values are outer and run first); filters without an order use LOWEST_PRECEDENCE and come last");
+            if (ties.Count > 0) basis += L("；", "; ") + string.Join(ListSep, ties.Select(g => string.Join(L(" 与 ", " and "), g.Select(u => u.Owner)) + L($" 同为 {OrderText(g.Key)}", $" both at {OrderText(g.Key)}"))) + L("，它们之间的先后不确定", ": their relative order is undefined");
+            if (registered.Count < units.Count) basis += L($"；{units.Count - registered.Count} 个过滤器没找到注册位置，排在最后", $"; {Plural(units.Count - registered.Count, "filter has", "filters have")} no registration and come last");
             notes.Insert(0, basis);
-            if (security is not null) notes.Insert(1, "Spring Security 过滤器链按 order -100 排在里面" + (security.Inner.Count > 0 ? $"，链里有 {security.Inner.Count} 个经 addFilterXxx 加进去的过滤器" : ""));
+            if (security is not null) notes.Insert(1, L("Spring Security 过滤器链按 order -100 排在里面", "The Spring Security filter chain is placed at order -100") + (security.Inner.Count > 0 ? L($"，链里有 {security.Inner.Count} 个经 addFilterXxx 加进去的过滤器", $"; the chain contains {Plural(security.Inner.Count, "filter", "filters")} added via addFilterXxx") : ""));
         }
-        notes.Add(reactive ? "Spring Boot / WebFlux 自带的 WebFilter（观测、HiddenHttpMethodFilter…）没画" : "Spring Boot 自带的过滤器（字符编码、表单内容、RequestContextFilter、观测…）没画");
+        notes.Add(reactive ? L("Spring Boot / WebFlux 自带的 WebFilter（观测、HiddenHttpMethodFilter…）没画", "WebFilters built into Spring Boot / WebFlux (observation, HiddenHttpMethodFilter…) are not drawn") : L("Spring Boot 自带的过滤器（字符编码、表单内容、RequestContextFilter、观测…）没画", "Filters built into Spring Boot (character encoding, form content, RequestContextFilter, observation…) are not drawn"));
         return (units, notes, orderKnown);
     }
 
@@ -568,17 +569,17 @@ public static partial class SpringFrameworkFlow
                 switch (call.Name)
                 {
                     case "addPathPatterns":
-                        current.Notes.Add("路径 " + PatternText(raw));
+                        current.Notes.Add(L("路径 ", "paths ") + PatternText(raw));
                         break;
                     case "excludePathPatterns":
-                        current.Notes.Add("排除 " + PatternText(raw));
+                        current.Notes.Add(L("排除 ", "excludes ") + PatternText(raw));
                         break;
                     case "order":
                         if (w.EvalOrder(call.Args, m.Path) is { } v) { current.Order = v; current.Notes.Add($"order({OrderText(v)})"); anyOrder = true; }
                         break;
                 }
             }
-            if (count > 0) where.Add($"{w.MemberLabel(m)}（{World.FileName(m.Path)}:{m.StartLine}）");
+            if (count > 0) where.Add(L($"{w.MemberLabel(m)}（{World.FileName(m.Path)}:{m.StartLine}）", $"{w.MemberLabel(m)} ({World.FileName(m.Path)}:{m.StartLine})"));
         }
         units = units.OrderBy(u => u.Order ?? 0).ThenBy(u => u.Seq).ToList();
         var known = true;
@@ -586,18 +587,19 @@ public static partial class SpringFrameworkFlow
         {
             var u = InterceptorUnit(w, null, cls.Path, cls.StartLine, null, seq++, cls);
             u.Registered = false;
-            u.Notes.Insert(0, "没找到 registry.addInterceptor 注册位置，顺序未知");
+            u.Notes.Insert(0, L("没找到 registry.addInterceptor 注册位置，顺序未知", "no registry.addInterceptor registration found, order unknown"));
             units.Add(u);
             known = false;
         }
-        if (units.Count == 0) notes.Add("没有发现拦截器（WebMvcConfigurer.addInterceptors 里没有 registry.addInterceptor，也没有 HandlerInterceptor 实现）");
+        if (units.Count == 0) notes.Add(L("没有发现拦截器（WebMvcConfigurer.addInterceptors 里没有 registry.addInterceptor，也没有 HandlerInterceptor 实现）", "No interceptors found (no registry.addInterceptor in WebMvcConfigurer.addInterceptors and no HandlerInterceptor implementations)"));
         else
         {
-            if (where.Count > 0) notes.Add($"拦截器按 {string.Join("、", where)} 里 registry.addInterceptor 的书写顺序" + (anyOrder ? "（写了 .order(n) 的先按 order 排）" : "")
-                                           + "：preHandle 顺着走，postHandle / afterCompletion 倒着回来");
+            if (where.Count > 0) notes.Add(L($"拦截器按 {string.Join(ListSep, where)} 里 registry.addInterceptor 的书写顺序", $"Interceptors in the order of registry.addInterceptor calls in {string.Join(ListSep, where)}")
+                                           + (anyOrder ? L("（写了 .order(n) 的先按 order 排）", " (those with .order(n) are sorted by order first)") : "")
+                                           + L("：preHandle 顺着走，postHandle / afterCompletion 倒着回来", ": preHandle runs in order, postHandle / afterCompletion run in reverse"));
             var builtIn = units.Where(u => u.Kind == "external-group").Select(u => u.Label).ToList();
-            if (builtIn.Count > 0) notes.Add($"{string.Join("、", builtIn)} 是 Spring / 第三方的拦截器，只画一行");
-            if (!known) notes.Add("有 HandlerInterceptor 实现没找到注册位置，追加在最后");
+            if (builtIn.Count > 0) notes.Add(L($"{string.Join(ListSep, builtIn)} 是 Spring / 第三方的拦截器，只画一行", $"{string.Join(ListSep, builtIn)}: Spring / third-party interceptors, drawn as one row each"));
+            if (!known) notes.Add(L("有 HandlerInterceptor 实现没找到注册位置，追加在最后", "Some HandlerInterceptor implementations have no registration and are appended at the end"));
         }
         return (units, notes, known);
     }
@@ -615,9 +617,9 @@ public static partial class SpringFrameworkFlow
             if (type is not null && !anon && w.TypeByName.TryGetValue(type, out var c) && c.Kind == SymbolKind.Class) cls = c;
             if (cls is null)
             {
-                var label = anon ? $"匿名 {type}" : type ?? expr.Trim();
+                var label = anon ? L($"匿名 {type}", $"anonymous {type}") : type ?? expr.Trim();
                 var ext = new Unit { Label = label, Owner = label, Kind = "external-group", Path = path, Line = line, Seq = seq };
-                ext.Notes.Add($"registry.{how}（{World.FileName(path)}:{line}）" + (anon ? "，匿名类" : "，Spring / 第三方内置"));
+                ext.Notes.Add(L($"registry.{how}（{World.FileName(path)}:{line}）", $"registry.{how} ({World.FileName(path)}:{line})") + (anon ? L("，匿名类", ", anonymous class") : L("，Spring / 第三方内置", ", built into Spring / third-party")));
                 return ext;
             }
         }
@@ -628,18 +630,18 @@ public static partial class SpringFrameworkFlow
             Label = pre is null ? name : name + ".preHandle", Owner = name, SymbolId = pre?.Id ?? cls!.Id, QualifiedName = (pre ?? cls!).QualifiedName,
             Path = path, Line = line, CallPath = pre?.Path, Symbol = pre ?? cls, Seq = seq,
         };
-        if (how is not null) u.Notes.Add($"registry.{how}（{World.FileName(path)}:{line}）");
+        if (how is not null) u.Notes.Add(L($"registry.{how}（{World.FileName(path)}:{line}）", $"registry.{how} ({World.FileName(path)}:{line})"));
         if (pre is not null)
         {
             u.Pre = w.Calls(pre).Where(JavaKeep).ToList();
             if (w.Span(pre) is { } sp && w.Text(pre.Path) is { } t && Regex.IsMatch(t.Code[sp.Start..sp.End], @"\breturn\s+false\b"))
-                u.Notes.Add("preHandle 返回 false 时请求到此为止（不进控制器）");
+                u.Notes.Add(L("preHandle 返回 false 时请求到此为止（不进控制器）", "when preHandle returns false the request stops here (never reaches the controller)"));
         }
         if (w.MethodIn(cls!, "postHandle") is { } post)
-            u.Exits.Add(Node(post.Id, name + ".postHandle", post.QualifiedName, "call", StageTail, $"{name} 后置：控制器返回后、渲染视图前（出错时不执行）",
+            u.Exits.Add(Node(post.Id, name + ".postHandle", post.QualifiedName, "call", StageTail, L($"{name} 后置：控制器返回后、渲染视图前（出错时不执行）", $"{name} after: after the controller returns, before the view renders (skipped on error)"),
                 w.CallNodes(w.Calls(post), post.Path, StageTail), post.Path, post.StartLine));
         if (w.MethodIn(cls!, "afterCompletion") is { } after)
-            u.After.Add(Node(after.Id, name + ".afterCompletion", after.QualifiedName, "call", StageTail, $"{name} 收尾：请求完成后（无论成败，视图渲染之后）",
+            u.After.Add(Node(after.Id, name + ".afterCompletion", after.QualifiedName, "call", StageTail, L($"{name} 收尾：请求完成后（无论成败，视图渲染之后）", $"{name} completion: after the request completes (success or failure, after view rendering)"),
                 w.CallNodes(w.Calls(after), after.Path, StageTail), after.Path, after.StartLine));
         return u;
     }
@@ -650,8 +652,8 @@ public static partial class SpringFrameworkFlow
     {
         var notes = new List<string>();
         var (defaults, routes) = GatewayConfig(w.Src.ReadFile, containerPath);
-        var group = new Unit { Label = "网关过滤器链（Spring Cloud Gateway）", Owner = "Gateway", Kind = "external-group" };
-        group.Notes.Add("路由转发的请求：RoutePredicateHandlerMapping 匹配路由 → FilteringWebHandler 按 order 跑 GlobalFilter 与路由过滤器");
+        var group = new Unit { Label = L("网关过滤器链（Spring Cloud Gateway）", "Gateway filter chain (Spring Cloud Gateway)"), Owner = "Gateway", Kind = "external-group" };
+        group.Notes.Add(L("路由转发的请求：RoutePredicateHandlerMapping 匹配路由 → FilteringWebHandler 按 order 跑 GlobalFilter 与路由过滤器", "Routed requests: RoutePredicateHandlerMapping matches the route → FilteringWebHandler runs GlobalFilters and route filters by order"));
         var seq = 0;
         var items = new List<Unit>();
         foreach (var g in globals)
@@ -664,13 +666,13 @@ public static partial class SpringFrameworkFlow
                 QualifiedName = (main ?? g).QualifiedName, Path = main?.Path ?? g.Path, Line = main?.StartLine ?? g.StartLine, CallPath = main?.Path,
                 Symbol = main ?? g, Order = order, OrderHow = how, Seq = seq++,
             };
-            u.Notes.Add("GlobalFilter（每条路由都过）" + (how is null ? "；没写 getOrder / @Order，按 LOWEST_PRECEDENCE" : "；顺序 " + how));
+            u.Notes.Add(L("GlobalFilter（每条路由都过）", "GlobalFilter (applies to every route)") + (how is null ? L("；没写 getOrder / @Order，按 LOWEST_PRECEDENCE", "; no getOrder / @Order, uses LOWEST_PRECEDENCE") : L("；顺序 ", "; order: ") + how));
             if (main is not null)
             {
                 var split = w.SplitAtChain(main, ReactiveChainTypes, ["filter"]);
                 (u.Pre, u.Post) = (split.Pre, split.Post);
-                if (split.Conditional) u.Notes.Add("有条件（有分支不往下传直接返回）");
-                if (!split.HasChain) u.Notes.Add("没找到 chain.filter(exchange) 调用");
+                if (split.Conditional) u.Notes.Add(L("有条件（有分支不往下传直接返回）", "conditional (some branches return without passing the request on)"));
+                if (!split.HasChain) u.Notes.Add(L("没找到 chain.filter(exchange) 调用", "no chain.filter(exchange) call found"));
             }
             items.Add(u);
         }
@@ -678,7 +680,7 @@ public static partial class SpringFrameworkFlow
         for (var i = 0; i < defaults.Count; i++)
         {
             var d = defaults[i];
-            var line = $"default-filters 第 {i + 1} 个（{World.FileName(d.File)}:{d.Line}）" + (d.Args.Length > 0 ? $"，参数 {d.Args}" : "");
+            var line = L($"default-filters 第 {i + 1} 个（{World.FileName(d.File)}:{d.Line}）", $"default-filters #{i + 1} ({World.FileName(d.File)}:{d.Line})") + (d.Args.Length > 0 ? L($"，参数 {d.Args}", $", args {d.Args}") : "");
             if (factoryByName.TryGetValue(d.Name, out var f) && w.MethodIn(f, "apply") is { } apply)
             {
                 var split = w.SplitAtChain(apply, ReactiveChainTypes, ["filter"]);
@@ -687,13 +689,13 @@ public static partial class SpringFrameworkFlow
                     Label = World.ShortName(f) + ".apply", Owner = World.ShortName(f), SymbolId = apply.Id, QualifiedName = apply.QualifiedName, Path = d.File, Line = d.Line,
                     CallPath = apply.Path, Pre = split.Pre, Post = split.Post, Symbol = apply, Order = i + 1, Seq = seq++,
                 };
-                u.Notes.Add(line + "；自研过滤器工厂");
+                u.Notes.Add(line + L("；自研过滤器工厂", "; custom filter factory"));
                 items.Add(u);
             }
             else
             {
                 var u = new Unit { Label = d.Name, Owner = d.Name, Kind = "external-group", Path = d.File, Line = d.Line, Order = i + 1, Seq = seq++ };
-                u.Notes.Add(line + "；Gateway 内置过滤器工厂");
+                u.Notes.Add(line + L("；Gateway 内置过滤器工厂", "; built-in Gateway filter factory"));
                 items.Add(u);
             }
         }
@@ -701,19 +703,19 @@ public static partial class SpringFrameworkFlow
         var routeFilters = routes.Where(r => r.Filters.Count > 0).ToList();
         if (routeFilters.Count > 0)
         {
-            var u = new Unit { Label = "各路由自己的过滤器", Owner = "routes", Kind = "external-group", Path = routeFilters[0].File, Line = routeFilters[0].Line, Seq = seq++ };
-            u.Notes.Add(string.Join("；", routeFilters.Take(8).Select(r => $"{r.Id}: {string.Join(", ", r.Filters.Select(f => f.Name))}")) + (routeFilters.Count > 8 ? $"；还有 {routeFilters.Count - 8} 条" : ""));
+            var u = new Unit { Label = L("各路由自己的过滤器", "Per-route filters"), Owner = "routes", Kind = "external-group", Path = routeFilters[0].File, Line = routeFilters[0].Line, Seq = seq++ };
+            u.Notes.Add(string.Join(L("；", "; "), routeFilters.Take(8).Select(r => $"{r.Id}: {string.Join(", ", r.Filters.Select(f => f.Name))}")) + (routeFilters.Count > 8 ? L($"；还有 {routeFilters.Count - 8} 条", $"; {routeFilters.Count - 8} more") : ""));
             group.Inner.Add(u);
         }
-        var forward = new Unit { Label = "转发到下游服务", Owner = "forward", Kind = "external-group", Seq = seq++ };
-        forward.Notes.Add("NettyRoutingFilter（lb:// 先经 ReactiveLoadBalancerClientFilter 选实例），Gateway 内置，order 最后");
+        var forward = new Unit { Label = L("转发到下游服务", "Forward to downstream service"), Owner = "forward", Kind = "external-group", Seq = seq++ };
+        forward.Notes.Add(L("NettyRoutingFilter（lb:// 先经 ReactiveLoadBalancerClientFilter 选实例），Gateway 内置，order 最后", "NettyRoutingFilter (lb:// first picks an instance via ReactiveLoadBalancerClientFilter), built into Gateway, ordered last"));
         group.Inner.Add(forward);
 
-        notes.Add($"网关：{globals.Count} 个 GlobalFilter，{defaults.Count} 个 default-filters，{routes.Count} 条路由（配置文件里的）；GlobalFilter 按 getOrder / @Order、default-filters 按配置顺序编号 1、2… 混排");
+        notes.Add(L($"网关：{globals.Count} 个 GlobalFilter，{defaults.Count} 个 default-filters，{routes.Count} 条路由（配置文件里的）；GlobalFilter 按 getOrder / @Order、default-filters 按配置顺序编号 1、2… 混排", $"Gateway: {Plural(globals.Count, "GlobalFilter", "GlobalFilters")}, {defaults.Count} default-filters, {Plural(routes.Count, "route", "routes")} (from configuration files); GlobalFilters by getOrder / @Order and default-filters numbered 1, 2… in configuration order are interleaved"));
         if (routes.Count > 0)
-            notes.Add("路由：" + string.Join("、", routes.Take(8).Select(r => r.Id + (r.Path is null ? "" : $"（{r.Path}）") + (r.Uri is null ? "" : $" → {r.Uri}"))) + (routes.Count > 8 ? $" 等 {routes.Count} 条" : ""));
+            notes.Add(L("路由：", "Routes: ") + string.Join(ListSep, routes.Take(8).Select(r => r.Id + (r.Path is null ? "" : L($"（{r.Path}）", $" ({r.Path})")) + (r.Uri is null ? "" : $" → {r.Uri}"))) + (routes.Count > 8 ? L($" 等 {routes.Count} 条", $" ({routes.Count} in total)") : ""));
         if (routes.Count == 0 && w.Files.Any(p => w.Text(p)?.Code.Contains("RouteLocatorBuilder", StringComparison.Ordinal) == true))
-            notes.Add("路由用 RouteLocatorBuilder 在代码里配置（没展开）");
+            notes.Add(L("路由用 RouteLocatorBuilder 在代码里配置（没展开）", "Routes are configured in code with RouteLocatorBuilder (not expanded)"));
         return (group, notes);
     }
 
@@ -740,32 +742,33 @@ public static partial class SpringFrameworkFlow
             var name = World.ShortName(aspect);
             var advices = w.Methods(aspect).Select(m => (Method: m, Ann: w.Annotation(m, AdviceAnnotations))).Where(x => x.Ann is not null).ToList();
             var aspectExit = new List<FlowNodeDto>();
-            var orderNote = how is null ? "没写 @Order，按 LOWEST_PRECEDENCE" : "顺序 " + how;
+            var orderNote = how is null ? L("没写 @Order，按 LOWEST_PRECEDENCE", "no @Order, uses LOWEST_PRECEDENCE") : L("顺序 ", "order: ") + how;
             var around = new List<(MapSymbol, FrameworkCall[])>();
             foreach (var kind in new[] { "Around", "Before" })
                 foreach (var (m, ann) in advices.Where(x => x.Ann!.Name == kind))
                 {
                     symbols.Add(m);
-                    var pc = PointcutText(w, m, ann!) is { } p ? "；切点 " + Expand(p) : "";
+                    var pc = PointcutText(w, m, ann!) is { } p ? L("；切点 ", "; pointcut ") + Expand(p) : "";
                     if (kind == "Around")
                     {
                         var split = w.SplitAtChain(m, ["ProceedingJoinPoint"], ["proceed"]);
-                        var note = $"@Around{pc}；{orderNote}" + (split.Conditional ? "；有条件（有分支不调 proceed）" : "") + (split.HasChain ? "" : "；没找到 proceed()：目标方法不会执行");
+                        var note = L($"@Around{pc}；{orderNote}", $"@Around{pc}; {orderNote}") + (split.Conditional ? L("；有条件（有分支不调 proceed）", "; conditional (some branches don't call proceed)") : "")
+                                   + (split.HasChain ? "" : L("；没找到 proceed()：目标方法不会执行", "; no proceed() found: the target method never runs"));
                         enter.Add(Node(m.Id, w.MemberLabel(m), m.QualifiedName, "call", StageAspect, note, w.CallNodes(split.Pre, m.Path, StageAspect), m.Path, m.StartLine));
                         around.Add((m, split.Post.ToArray()));
                     }
-                    else enter.Add(Node(m.Id, w.MemberLabel(m), m.QualifiedName, "call", StageAspect, $"@Before{pc}；{orderNote}", w.CallNodes(w.Calls(m), m.Path, StageAspect), m.Path, m.StartLine));
+                    else enter.Add(Node(m.Id, w.MemberLabel(m), m.QualifiedName, "call", StageAspect, L($"@Before{pc}；{orderNote}", $"@Before{pc}; {orderNote}"), w.CallNodes(w.Calls(m), m.Path, StageAspect), m.Path, m.StartLine));
                 }
             // 出来：AfterReturning / AfterThrowing → After → Around 后置
             foreach (var (m, ann) in advices.Where(x => x.Ann!.Name is "AfterReturning" or "AfterThrowing").Concat(advices.Where(x => x.Ann!.Name == "After")))
             {
                 symbols.Add(m);
-                var pc = PointcutText(w, m, ann!) is { } p ? "；切点 " + Expand(p) : "";
-                var when = ann!.Name switch { "AfterReturning" => "正常返回后", "AfterThrowing" => "出错时", _ => "无论成败" };
-                aspectExit.Add(Node(m.Id, w.MemberLabel(m), m.QualifiedName, "call", StageTail, $"{name} @{ann.Name}（{when}）{pc}", w.CallNodes(w.Calls(m), m.Path, StageTail), m.Path, m.StartLine));
+                var pc = PointcutText(w, m, ann!) is { } p ? L("；切点 ", "; pointcut ") + Expand(p) : "";
+                var when = ann!.Name switch { "AfterReturning" => L("正常返回后", "after a normal return"), "AfterThrowing" => L("出错时", "on error"), _ => L("无论成败", "always") };
+                aspectExit.Add(Node(m.Id, w.MemberLabel(m), m.QualifiedName, "call", StageTail, L($"{name} @{ann.Name}（{when}）{pc}", $"{name} @{ann.Name} ({when}){pc}"), w.CallNodes(w.Calls(m), m.Path, StageTail), m.Path, m.StartLine));
             }
             foreach (var (m, post) in around)
-                aspectExit.AddRange(w.CallNodes(post, m.Path, StageTail, $"{name} 后置（proceed 之后）"));
+                aspectExit.AddRange(w.CallNodes(post, m.Path, StageTail, L($"{name} 后置（proceed 之后）", $"{name} after (after proceed)")));
             exitsByAspect.Add(aspectExit);
         }
         for (var i = exitsByAspect.Count - 1; i >= 0; i--) exit.AddRange(exitsByAspect[i]);
@@ -779,34 +782,37 @@ public static partial class SpringFrameworkFlow
                     if (!annotated.TryGetValue(a.Name, out var list)) annotated[a.Name] = list = [];
                     list.Add(s);
                 }
-        string Examples(IEnumerable<MapSymbol> list) => string.Join("、", list.Select(s => OutlineBuilder.IsType(s.Kind) ? World.ShortName(s) : w.MemberLabel(s)).Distinct().Take(3));
+        string Examples(IEnumerable<MapSymbol> list) => string.Join(ListSep, list.Select(s => OutlineBuilder.IsType(s.Kind) ? World.ShortName(s) : w.MemberLabel(s)).Distinct().Take(3));
         var framework = new List<string>();
         foreach (var m in w.Declared.Where(s => s.Kind == SymbolKind.Method && w.Annotation(s, "Bean") is not null).OrderBy(s => s.Path, StringComparer.Ordinal).ThenBy(s => s.StartLine))
         {
             if (w.ReturnType(m) is not { } rt || !rt.EndsWith("Aspect", StringComparison.Ordinal) || w.TypeByName.ContainsKey(rt)) continue;
             var marker = rt switch { "TimedAspect" => "Timed", "CountedAspect" => "Counted", _ => null };
             List<MapSymbol> used = marker is null ? new() : annotated.GetValueOrDefault(marker) ?? new();
-            var what = marker is null ? "框架提供的切面" : $"Micrometer：对 @{marker} 标注的类 / 方法{(marker == "Timed" ? "计时" : "计数")}（{used.Count} 处{(used.Count > 0 ? "，如 " + Examples(used) : "")}）";
-            enter.Add(Node(null, rt, "", "external-group", StageAspect, $"{what}；@Bean {World.ShortName(m)}()（{World.FileName(m.Path)}:{m.StartLine}）", [], m.Path, m.StartLine));
+            var what = marker is null ? L("框架提供的切面", "framework-provided aspect")
+                : L($"Micrometer：对 @{marker} 标注的类 / 方法{(marker == "Timed" ? "计时" : "计数")}（{used.Count} 处{(used.Count > 0 ? "，如 " + Examples(used) : "")}）",
+                    $"Micrometer: {(marker == "Timed" ? "times" : "counts")} classes / methods annotated with @{marker} ({used.Count} uses{(used.Count > 0 ? ", e.g. " + Examples(used) : "")})");
+            enter.Add(Node(null, rt, "", "external-group", StageAspect, L($"{what}；@Bean {World.ShortName(m)}()（{World.FileName(m.Path)}:{m.StartLine}）", $"{what}; @Bean {World.ShortName(m)}() ({World.FileName(m.Path)}:{m.StartLine})"), [], m.Path, m.StartLine));
             framework.Add(rt);
         }
         var cached = CacheAnnotations.SelectMany(a => annotated.GetValueOrDefault(a) ?? []).DistinctBy(s => s.Id).ToList();
         if (cached.Count > 0)
         {
             var kinds = CacheAnnotations.Where(annotated.ContainsKey).Select(a => "@" + a).ToList();
-            enter.Add(Node(null, "缓存代理（Spring 内置）", "", "external-group", StageAspect,
-                $"{string.Join(" / ", kinds)} {cached.Count} 处，如 {Examples(cached)}：@Cacheable 命中缓存时不调方法，@CacheEvict 在方法返回后清缓存", [], cached[0].Path, cached[0].StartLine));
-            framework.Add("缓存代理");
+            enter.Add(Node(null, L("缓存代理（Spring 内置）", "Cache proxy (built into Spring)"), "", "external-group", StageAspect,
+                L($"{string.Join(" / ", kinds)} {cached.Count} 处，如 {Examples(cached)}：@Cacheable 命中缓存时不调方法，@CacheEvict 在方法返回后清缓存", $"{string.Join(" / ", kinds)}: {cached.Count} uses, e.g. {Examples(cached)}: @Cacheable skips the method on a cache hit, @CacheEvict clears the cache after the method returns"), [], cached[0].Path, cached[0].StartLine));
+            framework.Add(L("缓存代理", "cache proxy"));
         }
 
         var ties = ordered.GroupBy(x => x.Order.Order ?? Lowest).Where(g => g.Count() > 1).ToList();
         var known = ties.Count == 0;
-        if (aspects.Count == 0) notes.Add("没有发现 @Aspect 切面" + (framework.Count > 0 ? $"（有框架切面 / 代理：{string.Join("、", framework)}）" : ""));
+        if (aspects.Count == 0) notes.Add(L("没有发现 @Aspect 切面", "No @Aspect aspects found") + (framework.Count > 0 ? L($"（有框架切面 / 代理：{string.Join(ListSep, framework)}）", $" (framework aspects / proxies present: {string.Join(ListSep, framework)})") : ""));
         else
         {
-            notes.Add($"切面：{aspects.Count} 个 @Aspect 类，按 @Order / getOrder 排（小的在外层），画在控制器下面——实际包在切点匹配的 Bean 方法外面（Note 里是切点）"
-                      + (known ? "" : "；" + string.Join("、", ties.Select(g => string.Join(" 与 ", g.Select(x => World.ShortName(x.Aspect))) + " 没有区分的 @Order")) + "，先后不确定"));
-            if (framework.Count > 0) notes.Add($"另有框架切面 / 代理：{string.Join("、", framework)}");
+            notes.Add(L($"切面：{aspects.Count} 个 @Aspect 类，按 @Order / getOrder 排（小的在外层），画在控制器下面——实际包在切点匹配的 Bean 方法外面（Note 里是切点）",
+                        $"Aspects: {Plural(aspects.Count, "@Aspect class", "@Aspect classes")}, ordered by @Order / getOrder (smaller is outer), drawn under the controllers; they actually wrap the bean methods matched by their pointcuts (shown in the note)")
+                      + (known ? "" : L("；", "; ") + string.Join(ListSep, ties.Select(g => string.Join(L(" 与 ", " and "), g.Select(x => World.ShortName(x.Aspect))) + L(" 没有区分的 @Order", " have no distinguishing @Order"))) + L("，先后不确定", ", so their order is undefined")));
+            if (framework.Count > 0) notes.Add(L($"另有框架切面 / 代理：{string.Join(ListSep, framework)}", $"Also framework aspects / proxies: {string.Join(ListSep, framework)}"));
         }
         return (enter, exit, symbols, notes, known);
     }
@@ -836,9 +842,10 @@ public static partial class SpringFrameworkFlow
         if (types.Count + methods.Count == 0) return null;
         var examples = types.Select(World.ShortName).Concat(methods.Select(w.MemberLabel)).Distinct().Take(3);
         var first = types.Concat(methods).OrderBy(s => s.Path, StringComparer.Ordinal).ThenBy(s => s.StartLine).First();
-        var note = $"@Transactional {types.Count + methods.Count} 处（类 {types.Count}、方法 {methods.Count}，如 {string.Join("、", examples)}）：事务代理在方法正常返回后提交，抛 RuntimeException 回滚"
-                   + (readOnly > 0 ? $"；其中 readOnly {readOnly} 处" : "");
-        return Node(null, "@Transactional 提交 / 回滚", "", "external-group", StageTail, note, [], first.Path, first.StartLine);
+        var note = L($"@Transactional {types.Count + methods.Count} 处（类 {types.Count}、方法 {methods.Count}，如 {string.Join(ListSep, examples)}）：事务代理在方法正常返回后提交，抛 RuntimeException 回滚",
+                     $"@Transactional: {types.Count + methods.Count} uses ({types.Count} on classes, {methods.Count} on methods, e.g. {string.Join(ListSep, examples)}): the transaction proxy commits after a normal return and rolls back on RuntimeException")
+                   + (readOnly > 0 ? L($"；其中 readOnly {readOnly} 处", $"; {readOnly} of them readOnly") : "");
+        return Node(null, L("@Transactional 提交 / 回滚", "@Transactional commit / rollback"), "", "external-group", StageTail, note, [], first.Path, first.StartLine);
     }
 
     private static (List<FlowNodeDto> Nodes, List<MapSymbol> Symbols) ExceptionHandlers(World w, List<MapSymbol> resolvers)
@@ -852,16 +859,16 @@ public static partial class SpringFrameworkFlow
             if (w.Annotation(m, "ExceptionHandler") is not { } a || w.Owner(m) is not { } owner) continue;
             var types = ClassLiteral.Matches(a.Args ?? "").Select(x => MapBuilder.LastSegment(x.Groups[1].Value)).ToList();
             if (types.Count == 0 && w.Params(m).FirstOrDefault(p => p.Type.EndsWith("Exception", StringComparison.Ordinal) || p.Type is "Throwable" or "Error").Type is { } pt) types.Add(pt);
-            var what = types.Count == 0 ? "异常" : string.Join("、", types);
+            var what = types.Count == 0 ? L("异常", "exception") : string.Join(ListSep, types);
             var adviceAnn = w.Annotation(owner, "ControllerAdvice", "RestControllerAdvice");
             symbols.Add(m);
             if (adviceAnn is null)
             {
-                local.Add(Node(m.Id, w.MemberLabel(m), m.QualifiedName, "call", StageTail, $"出错时：{what}（控制器内，只管 {World.ShortName(owner)}）", w.CallNodes(w.Calls(m), m.Path, StageTail), m.Path, m.StartLine));
+                local.Add(Node(m.Id, w.MemberLabel(m), m.QualifiedName, "call", StageTail, L($"出错时：{what}（控制器内，只管 {World.ShortName(owner)}）", $"On error: {what} (inside the controller, only for {World.ShortName(owner)})"), w.CallNodes(w.Calls(m), m.Path, StageTail), m.Path, m.StartLine));
                 continue;
             }
             var (order, _) = w.TypeOrder(owner);
-            advice.Add((order ?? Lowest, seq++, Node(m.Id, w.MemberLabel(m), m.QualifiedName, "call", StageTail, $"出错时：{what}（@{adviceAnn.Name}，{AdviceScope(adviceAnn)}）",
+            advice.Add((order ?? Lowest, seq++, Node(m.Id, w.MemberLabel(m), m.QualifiedName, "call", StageTail, L($"出错时：{what}（@{adviceAnn.Name}，{AdviceScope(adviceAnn)}）", $"On error: {what} (@{adviceAnn.Name}, {AdviceScope(adviceAnn)})"),
                 w.CallNodes(w.Calls(m), m.Path, StageTail), m.Path, m.StartLine)));
         }
         // @ControllerAdvice 继承 ResponseEntityExceptionHandler：Spring MVC 标准异常由基类统一处理，重写的 handleXxx 挂在下面
@@ -873,12 +880,12 @@ public static partial class SpringFrameworkFlow
             {
                 symbols.Add(m);
                 var ex = w.Params(m).FirstOrDefault(p => p.Type.EndsWith("Exception", StringComparison.Ordinal)).Type;
-                return Node(m.Id, w.MemberLabel(m), m.QualifiedName, "call", StageTail, $"出错时：{ex ?? "异常"}（重写基类方法）", w.CallNodes(w.Calls(m), m.Path, StageTail), m.Path, m.StartLine);
+                return Node(m.Id, w.MemberLabel(m), m.QualifiedName, "call", StageTail, L($"出错时：{ex ?? "异常"}（重写基类方法）", $"On error: {ex ?? "exception"} (overrides a base class method)"), w.CallNodes(w.Calls(m), m.Path, StageTail), m.Path, m.StartLine);
             }).ToList();
             var (order, _) = w.TypeOrder(t);
             advice.Add((order ?? Lowest, seq++, Node(null, $"{World.ShortName(t)} : ResponseEntityExceptionHandler", "", "external-group", StageTail,
-                $"出错时：Spring MVC 标准异常（参数校验、类型转换、404 / 405 …）由基类 ResponseEntityExceptionHandler 统一处理（@{ann.Name}，{AdviceScope(ann)}）"
-                + (overrides.Count > 0 ? $"；重写了 {string.Join("、", overrides.Select(World.ShortName))}" : ""), kids, t.Path, t.StartLine)));
+                L($"出错时：Spring MVC 标准异常（参数校验、类型转换、404 / 405 …）由基类 ResponseEntityExceptionHandler 统一处理（@{ann.Name}，{AdviceScope(ann)}）", $"On error: standard Spring MVC exceptions (validation, type conversion, 404 / 405 …) are handled by the base class ResponseEntityExceptionHandler (@{ann.Name}, {AdviceScope(ann)})")
+                + (overrides.Count > 0 ? L($"；重写了 {string.Join(ListSep, overrides.Select(World.ShortName))}", $"; overrides {string.Join(ListSep, overrides.Select(World.ShortName))}") : ""), kids, t.Path, t.StartLine)));
         }
         var nodes = new List<FlowNodeDto>(local);
         nodes.AddRange(advice.OrderBy(x => x.Order).ThenBy(x => x.Seq).Select(x => x.Node));
@@ -888,11 +895,11 @@ public static partial class SpringFrameworkFlow
             if ((graphql ? w.MethodIn(r, "handleException", "onException") : w.MethodIn(r, "doResolveException", "resolveException")) is not { } m) continue;
             symbols.Add(m);
             nodes.Add(Node(m.Id, World.ShortName(r) + "." + World.ShortName(m), m.QualifiedName, "call", StageTail,
-                graphql ? "出错时：GraphQL 数据获取的异常（DataFetcherExceptionHandler，只管 /graphql）" : "出错时（HandlerExceptionResolver）",
+                graphql ? L("出错时：GraphQL 数据获取的异常（DataFetcherExceptionHandler，只管 /graphql）", "On error: GraphQL data fetching exceptions (DataFetcherExceptionHandler, /graphql only)") : L("出错时（HandlerExceptionResolver）", "On error (HandlerExceptionResolver)"),
                 w.CallNodes(w.Calls(m), m.Path, StageTail), m.Path, m.StartLine));
         }
         return (nodes, symbols);
     }
 
-    private static string AdviceScope(JavaSource.Annotation a) => string.IsNullOrWhiteSpace(a.Args) ? "全局" : "范围 " + Regex.Replace(a.Args.Trim(), @"\s+", " ");
+    private static string AdviceScope(JavaSource.Annotation a) => string.IsNullOrWhiteSpace(a.Args) ? L("全局", "global") : L("范围 ", "scope ") + Regex.Replace(a.Args.Trim(), @"\s+", " ");
 }

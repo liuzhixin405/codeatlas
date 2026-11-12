@@ -19,7 +19,7 @@ public sealed class GrpcServiceRule : IDiscoveryRule
 {
     public const string RuleId = "grpc-service";
     public string Id => RuleId;
-    public string Description => "gRPC 客户端桩与服务端注册按服务名对上（Go / Python / C# / Node / Java）";
+    public string Description => L("gRPC 客户端桩与服务端注册按服务名对上（Go / Python / C# / Node / Java）", "gRPC client stubs matched to server registrations by service name (Go / Python / C# / Node / Java)");
 
     private const int ChannelWindow = 5;
 

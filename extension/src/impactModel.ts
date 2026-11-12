@@ -1,6 +1,7 @@
 // 影响范围（侧边栏树视图，反向：改它会影响谁）的纯逻辑：ImpactDto → 树节点 → TreeItem 字段。不 import vscode，方便单测；
 // impactView.ts 把这里算出的 OutlineItemSpec 原样搬进 vscode.TreeItem。名字、ctx 文案、置信度、跳转目标与调用大纲共用 outlineModel.ts。
 import { EntryKindLabels, entryTitle } from "../webview/flowView";
+import { L, listSep } from "../webview/l10n";
 import type { EntryDto, ImpactCallerDto, ImpactCallerKind, ImpactDto, ImpactEntryDto, SymbolDto } from "../webview/types";
 import { baseName, confidenceText, ctxLabel, hasDefinition, shortName, type JumpTarget, type OutlineItemSpec } from "./outlineModel";
 
@@ -66,18 +67,18 @@ export interface ImpactInfoNode {
 /** 调用方式的中文；直接调用不写。 */
 export const CallerKindLabels: Record<ImpactCallerKind, string | null> = {
   call: null,
-  impl: "经接口",
-  dispatch: "经分派",
-  new: "构造",
-  hop: "跨服务",
+  impl: L("经接口", "via interface"),
+  dispatch: L("经分派", "via dispatch"),
+  new: L("构造", "constructor"),
+  hop: L("跨服务", "cross-service"),
 };
 
 const CallerKindNames: Record<ImpactCallerKind, string> = {
-  call: "直接调用",
-  impl: "经接口调用（调用方调的是接口 / 基类方法，实现落到这里）",
-  dispatch: "经分派（Mediator / 消息分发到这个 Handler）",
-  new: "构造（new 了这个类型）",
-  hop: "跨服务调用（别的容器里的 HTTP / gRPC 调用经路由对上这个入口，比如前端页面里的 fetch）",
+  call: L("直接调用", "direct call"),
+  impl: L("经接口调用（调用方调的是接口 / 基类方法，实现落到这里）", "call via interface (the caller calls an interface / base-class method whose implementation lands here)"),
+  dispatch: L("经分派（Mediator / 消息分发到这个 Handler）", "via dispatch (Mediator / message dispatched to this Handler)"),
+  new: L("构造（new 了这个类型）", "constructor (instantiates this type with new)"),
+  hop: L("跨服务调用（别的容器里的 HTTP / gRPC 调用经路由对上这个入口，比如前端页面里的 fetch）", "cross-service call (an HTTP / gRPC call in another container routed to this entry, e.g. a fetch in a frontend page)"),
 };
 
 const CallerKindIcons: Record<ImpactCallerKind, string> = {
@@ -91,14 +92,14 @@ const CallerKindIcons: Record<ImpactCallerKind, string> = {
 /** 入口行前缀：比 EntryKindLabels（分组标题，如"HTTP 路由"）短，后面紧跟路由 / 名字。没列的种类退回 EntryKindLabels。 */
 export const EntryPrefixes: Record<string, string> = {
   http: "HTTP",
-  command: "命令",
-  hosted: "常驻服务",
-  job: "定时任务",
+  command: L("命令", "command"),
+  hosted: L("常驻服务", "hosted service"),
+  job: L("定时任务", "job"),
   hub: "SignalR",
   grpc: "gRPC",
-  handler: "处理器",
-  page: "页面",
-  "api-route": "API 路由",
+  handler: L("处理器", "handler"),
+  page: L("页面", "page"),
+  "api-route": L("API 路由", "API route"),
 };
 
 const EntryIcons: Record<string, string> = {
@@ -165,9 +166,9 @@ export function rootChildren(impact: ImpactDto, root: ImpactRootNode, tests: boo
 export function callerChildren(impact: ImpactDto, ancestors: ReadonlySet<number>, tests: boolean): ImpactNode[] {
   const nodes: ImpactNode[] = impact.callers.map((caller) => ({ type: "caller", caller, ancestors }));
   if (!tests && impact.testCallers > 0) nodes.push({ type: "tests", count: impact.testCallers });
-  if (impact.truncated) nodes.push({ type: "info", text: "…调用方过多，后面的省略了", tooltip: "服务按上限截断了这一层；在 CodeTrail Graph 面板里看完整调用。", icon: "ellipsis" });
+  if (impact.truncated) nodes.push({ type: "info", text: L("…调用方过多，后面的省略了", "…too many callers, the rest are omitted"), tooltip: L("服务按上限截断了这一层；在 CodeTrail Graph 面板里看完整调用。", "The service truncated this level at its limit; see the full calls in the CodeTrail Graph panel."), icon: "ellipsis" });
   if (nodes.length === 0) {
-    nodes.push({ type: "info", text: "（没有调用方）", tooltip: "索引里没有找到调用它的地方。可能经反射、依赖注入、框架回调或配置调用，也可能确实没人用。", icon: "dash" });
+    nodes.push({ type: "info", text: L("（没有调用方）", "(no callers)"), tooltip: L("索引里没有找到调用它的地方。可能经反射、依赖注入、框架回调或配置调用，也可能确实没人用。", "No callers were found in the index. It may be called via reflection, dependency injection, framework callbacks or configuration, or it may really be unused."), icon: "dash" });
   }
   return nodes;
 }
@@ -204,9 +205,9 @@ function cmp(a: string, b: string): number {
 /** 调用方的 description：[入口] · [经接口 / 经分派 / 构造] · [×N] · [第一处的 ctx] · L行。 */
 export function callerDescription(c: ImpactCallerDto, recursive: boolean): string {
   const parts: string[] = [];
-  if (recursive) parts.push("↺ 递归");
+  if (recursive) parts.push(L("↺ 递归", "↺ recursive"));
   const entry = c.asEntry[0];
-  if (entry) parts.push(entryLabel(entry.entry) + (c.asEntry.length > 1 ? ` 等 ${c.asEntry.length} 个入口` : ""));
+  if (entry) parts.push(entryLabel(entry.entry) + (c.asEntry.length > 1 ? L(` 等 ${c.asEntry.length} 个入口`, ` and ${c.asEntry.length - 1} more ${c.asEntry.length - 1 === 1 ? "entry" : "entries"}`) : ""));
   const k = CallerKindLabels[c.kind];
   if (k) parts.push(k);
   if (c.sites.length > 1) parts.push(`×${c.sites.length}`);
@@ -227,19 +228,19 @@ export function callerTooltip(c: ImpactCallerDto, recursive: boolean): string {
   const lines: string[] = [];
   lines.push(s.qualifiedName || c.label);
   if (s.signature) lines.push(s.signature);
-  if (hasDefinition(s)) lines.push(`定义：${s.path}:${s.startLine}`);
+  if (hasDefinition(s)) lines.push(L(`定义：${s.path}:${s.startLine}`, `Definition: ${s.path}:${s.startLine}`));
   if (c.sites.length > 0) {
     const shown = c.sites.slice(0, MaxTooltipSites).map((site) => {
       const ctx = ctxLabel(site.ctx);
-      return `L${site.line}${ctx ? `（${ctx}）` : ""}`;
+      return `L${site.line}${ctx ? L(`（${ctx}）`, ` (${ctx})`) : ""}`;
     });
-    const more = c.sites.length > MaxTooltipSites ? ` 等 ${c.sites.length} 处` : "";
-    lines.push(`调用处（${s.path}）：${shown.join("、")}${more}`);
+    const more = c.sites.length > MaxTooltipSites ? L(` 等 ${c.sites.length} 处`, ` … (${c.sites.length} total)`) : "";
+    lines.push(L(`调用处（${s.path}）：${shown.join(listSep())}${more}`, `Call sites (${s.path}): ${shown.join(listSep())}${more}`));
   }
   lines.push(`${CallerKindNames[c.kind] ?? c.kind} · ${confidenceText(c.confidence)}`);
-  for (const e of c.asEntry) lines.push(`本身是入口：${entryLabel(e.entry)}（${e.containerName || e.containerKey}）`);
-  if (c.sites.length > 1) lines.push("单击跳到第一处调用");
-  if (recursive) lines.push("↺ 递归：这个方法已经在展开路径上，不再展开");
+  for (const e of c.asEntry) lines.push(L(`本身是入口：${entryLabel(e.entry)}（${e.containerName || e.containerKey}）`, `Is itself an entry: ${entryLabel(e.entry)} (${e.containerName || e.containerKey})`));
+  if (c.sites.length > 1) lines.push(L("单击跳到第一处调用", "Click to jump to the first call site"));
+  if (recursive) lines.push(L("↺ 递归：这个方法已经在展开路径上，不再展开", "↺ Recursive: this method is already on the expanded path; not expanding again"));
   return lines.join("\n");
 }
 
@@ -274,24 +275,24 @@ export function rootItem(node: ImpactRootNode): OutlineItemSpec {
 }
 
 export function entriesGroupItem(node: EntriesGroupNode): OutlineItemSpec {
-  const partial = node.truncated ? "（可能不全）" : "";
+  const partial = node.truncated ? L("（可能不全）", "(may be incomplete)") : "";
   const base = { icon: "debug-start", dim: false, contextValue: "impact.group", clickable: false };
   if (node.entries === null) {
-    return { ...base, label: "受影响的入口", description: "服务没有返回", tooltip: "服务没有返回入口信息（服务版本过旧？）。", icon: "warning", dim: true, collapsible: "none" };
+    return { ...base, label: L("受影响的入口", "Affected entries"), description: L("服务没有返回", "not returned by service"), tooltip: L("服务没有返回入口信息（服务版本过旧？）。", "The service returned no entry information (service version too old?)."), icon: "warning", dim: true, collapsible: "none" };
   }
   if (node.entries.length === 0) {
     return {
-      ...base, label: "没有走到任何入口", description: partial, icon: "dash", dim: true, collapsible: "none",
-      tooltip: "沿调用方一路往上没有碰到 HTTP 路由、命令、定时任务等入口。可能经反射 / 框架回调调用，或者只被测试调用。"
-        + (node.truncated ? "\n服务按上限停止了向上搜索，结果可能不全。" : ""),
+      ...base, label: L("没有走到任何入口", "Reaches no entries"), description: partial, icon: "dash", dim: true, collapsible: "none",
+      tooltip: L("沿调用方一路往上没有碰到 HTTP 路由、命令、定时任务等入口。可能经反射 / 框架回调调用，或者只被测试调用。", "Walking up the callers reached no entry such as an HTTP route, command or job. It may be called via reflection / framework callbacks, or only by tests.")
+        + (node.truncated ? L("\n服务按上限停止了向上搜索，结果可能不全。", "\nThe service stopped searching upward at its limit; results may be incomplete.") : ""),
     };
   }
   return {
     ...base,
-    label: `受影响的入口（${node.entries.length}）`,
+    label: L(`受影响的入口（${node.entries.length}）`, `Affected entries (${node.entries.length})`),
     description: partial,
-    tooltip: "沿调用方一路往上能走到的全部入口，按容器分组。改这个方法可能影响这些入口的行为。"
-      + (node.truncated ? "\n服务按上限停止了向上搜索，结果可能不全。" : ""),
+    tooltip: L("沿调用方一路往上能走到的全部入口，按容器分组。改这个方法可能影响这些入口的行为。", "All entries reachable by walking up the callers, grouped by container. Changing this method may affect their behavior.")
+      + (node.truncated ? L("\n服务按上限停止了向上搜索，结果可能不全。", "\nThe service stopped searching upward at its limit; results may be incomplete.") : ""),
     collapsible: "expanded",
   };
 }
@@ -299,8 +300,8 @@ export function entriesGroupItem(node: EntriesGroupNode): OutlineItemSpec {
 export function containerItem(node: ContainerNode): OutlineItemSpec {
   return {
     label: node.name,
-    description: `${node.entries.length} 个入口`,
-    tooltip: `${node.name}（${node.key}）`,
+    description: L(`${node.entries.length} 个入口`, `${node.entries.length} ${node.entries.length === 1 ? "entry" : "entries"}`),
+    tooltip: L(`${node.name}（${node.key}）`, `${node.name} (${node.key})`),
     icon: "package",
     dim: false,
     collapsible: node.only ? "expanded" : "collapsed",
@@ -313,12 +314,12 @@ export function entryItem(node: EntryNode): OutlineItemSpec {
   const { entry, depth, containerName } = node.item;
   return {
     label: entryLabel(entry),
-    description: `深度 ${depth}`,
+    description: L(`深度 ${depth}`, `depth ${depth}`),
     tooltip: [
       entry.qualifiedName,
       `${entryKindName(entry.kind)} · ${containerName}`,
-      `定义：${entry.file}:${entry.line}`,
-      depth === 0 ? "这个方法自己就是入口" : `往上 ${depth} 层调用到达`,
+      L(`定义：${entry.file}:${entry.line}`, `Definition: ${entry.file}:${entry.line}`),
+      depth === 0 ? L("这个方法自己就是入口", "This method is itself an entry") : L(`往上 ${depth} 层调用到达`, `Reached ${depth} ${depth === 1 ? "level" : "levels"} up the call chain`),
     ].join("\n"),
     icon: entryIcon(entry.kind),
     dim: false,
@@ -331,9 +332,9 @@ export function entryItem(node: EntryNode): OutlineItemSpec {
 export function callersGroupItem(node: CallersGroupNode): OutlineItemSpec {
   const n = `${node.count}${node.truncated ? "+" : ""}`;
   return {
-    label: `直接调用方（${n}）`,
+    label: L(`直接调用方（${n}）`, `Direct callers (${n})`),
     description: "",
-    tooltip: "直接调用这个方法的地方（含经接口、经分派、构造）。展开一个调用方看谁又调用了它。",
+    tooltip: L("直接调用这个方法的地方（含经接口、经分派、构造）。展开一个调用方看谁又调用了它。", "Places that call this method directly (including via interface, via dispatch and constructors). Expand a caller to see who calls it in turn."),
     icon: "call-incoming",
     dim: false,
     collapsible: "expanded",
@@ -344,9 +345,9 @@ export function callersGroupItem(node: CallersGroupNode): OutlineItemSpec {
 
 export function testsItem(node: TestsNode): OutlineItemSpec {
   return {
-    label: `被 ${node.count} 个测试调用`,
-    description: "点击包含测试",
-    tooltip: `测试代码里有 ${node.count} 个直接调用方，当前没有列出。点击切到「包含测试」。`,
+    label: L(`被 ${node.count} 个测试调用`, `Called by ${node.count} ${node.count === 1 ? "test" : "tests"}`),
+    description: L("点击包含测试", "click to include tests"),
+    tooltip: L(`测试代码里有 ${node.count} 个直接调用方，当前没有列出。点击切到「包含测试」。`, `${node.count} direct ${node.count === 1 ? "caller" : "callers"} in test code, not listed now. Click to switch to "Include tests".`),
     icon: "beaker",
     dim: true,
     collapsible: "none",

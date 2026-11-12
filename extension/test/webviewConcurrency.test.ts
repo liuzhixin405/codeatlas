@@ -1,12 +1,15 @@
 import { readFileSync } from "node:fs";
 import ts from "typescript";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { L, listSep } from "../webview/l10n";
 
 const source = ts.createSourceFile("main.ts", readFileSync(new URL("../webview/main.ts", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true);
 
 function compile(code: string, bindings: Record<string, unknown>, result: string): unknown {
   const compiled = ts.transpileModule(code, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-  return new Function(...Object.keys(bindings), compiled + "\nreturn " + result)(...Object.values(bindings));
+  // 抽出来的函数体里的界面文案走 l10n；测试环境是中文
+  const all = { L, listSep, ...bindings };
+  return new Function(...Object.keys(all), compiled + "\nreturn " + result)(...Object.values(all));
 }
 
 function declaration(name: string): string {

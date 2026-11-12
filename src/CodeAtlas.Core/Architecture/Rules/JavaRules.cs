@@ -168,7 +168,7 @@ public sealed class JavaOutboundRule : IDiscoveryRule
 {
     public const string RuleId = "java-outbound";
     public string Id => RuleId;
-    public string Description => "Java 的 RestTemplate / WebClient / RestClient / HttpClient / OkHttp 调用、@FeignClient 接口、DiscoveryClient 服务名查找";
+    public string Description => L("Java 的 RestTemplate / WebClient / RestClient / HttpClient / OkHttp 调用、@FeignClient 接口、DiscoveryClient 服务名查找", "Java RestTemplate / WebClient / RestClient / HttpClient / OkHttp calls, @FeignClient interfaces, DiscoveryClient service-name lookups");
 
     /// <param name="FileMustContain">文件里得出现的类型名（.uri( / .url( 这种通用调用只在用了对应客户端的文件里算）。</param>
     private sealed record Call(Regex Regex, string[]? FileMustContain, bool ByServiceName = false);
@@ -305,7 +305,7 @@ public sealed class SpringCloudRule : IDiscoveryRule
 {
     public const string RuleId = "spring-cloud";
     public string Id => RuleId;
-    public string Description => "Spring Cloud Gateway 路由、Eureka 注册、配置中心客户端";
+    public string Description => L("Spring Cloud Gateway 路由、Eureka 注册、配置中心客户端", "Spring Cloud Gateway routes, Eureka registration, config server clients");
 
     private static readonly Regex RouteUri = new(@"^(spring\.cloud\.gateway\.(?:[\w\-]+\.)*routes)\[(\d+)\]\.uri$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private const string EurekaClient = "org.springframework.cloud:spring-cloud-starter-netflix-eureka-client";

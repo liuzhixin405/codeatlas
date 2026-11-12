@@ -36,37 +36,39 @@ public static partial class PythonFrameworkFlow
     [GeneratedRegex(@"@\s*(?:\w+\.)?(authentication_classes|permission_classes|renderer_classes|throttle_classes)\s*\(")]
     private static partial Regex DrfDecoratorOverride();
 
-    private static readonly Dictionary<string, string> KnownDjangoMiddleware = new(StringComparer.Ordinal)
+    private static string? KnownDjangoMiddleware(string name) => name switch
     {
-        ["SecurityMiddleware"] = "HTTPS 重定向与安全响应头",
-        ["SessionMiddleware"] = "从 Cookie 取会话，响应时保存",
-        ["CommonMiddleware"] = "APPEND_SLASH / PREPEND_WWW、拦截 DISALLOWED_USER_AGENTS",
-        ["CsrfViewMiddleware"] = "CSRF 校验（process_view，视图之前）",
-        ["AuthenticationMiddleware"] = "给 request.user 挂上会话里的用户（惰性）",
-        ["MessageMiddleware"] = "消息框架",
-        ["XFrameOptionsMiddleware"] = "X-Frame-Options 响应头",
-        ["CorsMiddleware"] = "跨域响应头",
-        ["LocaleMiddleware"] = "按请求选语言",
-        ["GZipMiddleware"] = "响应压缩",
-        ["WhiteNoiseMiddleware"] = "静态文件",
-        ["ConditionalGetMiddleware"] = "ETag / Last-Modified 条件请求",
+        "SecurityMiddleware" => L("HTTPS 重定向与安全响应头", "HTTPS redirect and security response headers"),
+        "SessionMiddleware" => L("从 Cookie 取会话，响应时保存", "loads the session from the cookie and saves it on response"),
+        "CommonMiddleware" => L("APPEND_SLASH / PREPEND_WWW、拦截 DISALLOWED_USER_AGENTS", "APPEND_SLASH / PREPEND_WWW, blocks DISALLOWED_USER_AGENTS"),
+        "CsrfViewMiddleware" => L("CSRF 校验（process_view，视图之前）", "CSRF check (process_view, before the view)"),
+        "AuthenticationMiddleware" => L("给 request.user 挂上会话里的用户（惰性）", "attaches the session user to request.user (lazily)"),
+        "MessageMiddleware" => L("消息框架", "messages framework"),
+        "XFrameOptionsMiddleware" => L("X-Frame-Options 响应头", "X-Frame-Options response header"),
+        "CorsMiddleware" => L("跨域响应头", "CORS response headers"),
+        "LocaleMiddleware" => L("按请求选语言", "selects the language per request"),
+        "GZipMiddleware" => L("响应压缩", "response compression"),
+        "WhiteNoiseMiddleware" => L("静态文件", "static files"),
+        "ConditionalGetMiddleware" => L("ETag / Last-Modified 条件请求", "ETag / Last-Modified conditional requests"),
+        _ => null,
     };
 
-    private static readonly Dictionary<string, string> KnownDrfClasses = new(StringComparer.Ordinal)
+    private static string? KnownDrfClasses(string name) => name switch
     {
-        ["SessionAuthentication"] = "用 Django 会话认证（非安全方法要过 CSRF）",
-        ["BasicAuthentication"] = "HTTP Basic 认证",
-        ["TokenAuthentication"] = "Authorization: Token …",
-        ["JWTAuthentication"] = "Authorization: Bearer <JWT>",
-        ["AllowAny"] = "不限制",
-        ["IsAuthenticated"] = "没登录就 401 / 403",
-        ["IsAuthenticatedOrReadOnly"] = "没登录只能读",
-        ["IsAdminUser"] = "只许 is_staff",
-        ["DjangoModelPermissions"] = "按模型权限",
-        ["JSONRenderer"] = "JSON",
-        ["BrowsableAPIRenderer"] = "可浏览的 API 页面",
-        ["AnonRateThrottle"] = "匿名用户限流",
-        ["UserRateThrottle"] = "登录用户限流",
+        "SessionAuthentication" => L("用 Django 会话认证（非安全方法要过 CSRF）", "authenticates with the Django session (unsafe methods must pass CSRF)"),
+        "BasicAuthentication" => L("HTTP Basic 认证", "HTTP Basic authentication"),
+        "TokenAuthentication" => "Authorization: Token …",
+        "JWTAuthentication" => "Authorization: Bearer <JWT>",
+        "AllowAny" => L("不限制", "no restriction"),
+        "IsAuthenticated" => L("没登录就 401 / 403", "401 / 403 if not logged in"),
+        "IsAuthenticatedOrReadOnly" => L("没登录只能读", "read-only unless logged in"),
+        "IsAdminUser" => L("只许 is_staff", "is_staff only"),
+        "DjangoModelPermissions" => L("按模型权限", "model permissions"),
+        "JSONRenderer" => "JSON",
+        "BrowsableAPIRenderer" => L("可浏览的 API 页面", "browsable API pages"),
+        "AnonRateThrottle" => L("匿名用户限流", "rate limit for anonymous users"),
+        "UserRateThrottle" => L("登录用户限流", "rate limit for logged-in users"),
+        _ => null,
     };
 
     /// <summary>定义了 MIDDLEWARE = [...] 的 settings：settings.py 优先，再 base.py / common.py，再浅的；其余改了 MIDDLEWARE 的文件记下来。</summary>
@@ -127,34 +129,34 @@ public static partial class PythonFrameworkFlow
             if (sym is { Kind: SymbolKind.Class } cls)
             {
                 middlewareSymbols.Add(cls);
-                var nth = $"MIDDLEWARE 第 {middlewareNodes.Count + 1} 个，{where}";
+                var nth = L($"MIDDLEWARE 第 {middlewareNodes.Count + 1} 个，{where}", $"MIDDLEWARE #{middlewareNodes.Count + 1}, {where}");
                 var view = x.Method(cls, "process_view");
                 FlowNodeDto node;
                 if (x.Method(cls, "__call__") is { } call)
                 {
-                    var (n, p) = SplitNode(x, call, ["get_response"], new Regex(@"\bget_response\s*\("), StageMiddleware, $"自研中间件（{nth}）", s.Path, line);
+                    var (n, p) = SplitNode(x, call, ["get_response"], new Regex(@"\bget_response\s*\("), StageMiddleware, L($"自研中间件（{nth}）", $"Custom middleware ({nth})"), s.Path, line);
                     node = n;
                     post.AddRange(p);
                 }
                 else if (x.Method(cls, "process_request") is { } req)
-                    node = x.FunctionNode(req, StageMiddleware, $"自研中间件 process_request（MiddlewareMixin，{nth}）", s.Path, line);
+                    node = x.FunctionNode(req, StageMiddleware, L($"自研中间件 process_request（MiddlewareMixin，{nth}）", $"Custom middleware process_request (MiddlewareMixin, {nth})"), s.Path, line);
                 else if (view is not null)
-                    node = x.FunctionNode(view, StageMiddleware, $"自研中间件，只有 process_view：URL 解析之后、视图之前（{nth}）", s.Path, line);
+                    node = x.FunctionNode(view, StageMiddleware, L($"自研中间件，只有 process_view：URL 解析之后、视图之前（{nth}）", $"Custom middleware with only process_view: after URL resolution, before the view ({nth})"), s.Path, line);
                 else
-                    node = Node(cls.Id, cls.Name, cls.QualifiedName, "call", StageMiddleware, $"自研中间件（{nth}），没有 __call__ / process_request / process_view", [], s.Path, line);
+                    node = Node(cls.Id, cls.Name, cls.QualifiedName, "call", StageMiddleware, L($"自研中间件（{nth}），没有 __call__ / process_request / process_view", $"Custom middleware ({nth}); no __call__ / process_request / process_view"), [], s.Path, line);
                 // process_view 在 URL 解析之后、视图之前：挂在这个中间件下面最后一行
                 if (view is not null && node.SymbolId != view.Id)
-                    node = node with { Children = [.. node.Children, x.FunctionNode(view, StageMiddleware, "process_view：URL 解析之后、视图之前")] };
+                    node = node with { Children = [.. node.Children, x.FunctionNode(view, StageMiddleware, L("process_view：URL 解析之后、视图之前", "process_view: after URL resolution, before the view"))] };
                 middlewareNodes.Add(node);
                 if (x.Method(cls, "process_response") is { } resp)
                 {
                     tailSymbols.Add(resp);
-                    post.Add(x.FunctionNode(resp, StageTail, $"{cls.Name} 的 process_response（响应往回走，倒序）"));
+                    post.Add(x.FunctionNode(resp, StageTail, L($"{cls.Name} 的 process_response（响应往回走，倒序）", $"{cls.Name}.process_response (on the way back with the response, reverse order)")));
                 }
                 if (x.Method(cls, "process_exception") is { } exc)
                 {
                     tailSymbols.Add(exc);
-                    error.Add(x.FunctionNode(exc, StageTail, $"出错时：{cls.Name}.process_exception（视图抛异常，倒序）"));
+                    error.Add(x.FunctionNode(exc, StageTail, L($"出错时：{cls.Name}.process_exception（视图抛异常，倒序）", $"On error: {cls.Name}.process_exception (view raised an exception, reverse order)")));
                 }
                 continue;
             }
@@ -166,17 +168,17 @@ public static partial class PythonFrameworkFlow
                 var target = inner ?? factory;
                 var next = Params(x, factory).FirstOrDefault()?.Name ?? "get_response";
                 var (n, p) = SplitNode(x, target, [next], new Regex(@"\b" + Regex.Escape(next) + @"\s*\("), StageMiddleware,
-                    $"自研函数中间件（MIDDLEWARE 第 {middlewareNodes.Count + 1} 个，{where}）", s.Path, line, factory.Name);
+                    L($"自研函数中间件（MIDDLEWARE 第 {middlewareNodes.Count + 1} 个，{where}）", $"Custom function middleware (MIDDLEWARE #{middlewareNodes.Count + 1}, {where})"), s.Path, line, factory.Name);
                 middlewareNodes.Add(n);
                 post.AddRange(p);
                 continue;
             }
             var name = LastSegment(dotted);
-            var origin = dotted.StartsWith("django.", StringComparison.Ordinal) ? "Django 内置"
-                : moduleFound ? $"仓库里的模块，但没找到 {name}"
-                : $"第三方 {dotted.Split('.')[0]}";
-            var desc = KnownDjangoMiddleware.GetValueOrDefault(name);
-            middlewareNodes.Add(Node(null, name, dotted, "external-group", StageMiddleware, $"{origin}（{where}）" + (desc is null ? "" : "：" + desc), [], s.Path, line));
+            var origin = dotted.StartsWith("django.", StringComparison.Ordinal) ? L("Django 内置", "Django built-in")
+                : moduleFound ? L($"仓库里的模块，但没找到 {name}", $"module in the repo, but {name} not found")
+                : L($"第三方 {dotted.Split('.')[0]}", $"third-party {dotted.Split('.')[0]}");
+            var desc = KnownDjangoMiddleware(name);
+            middlewareNodes.Add(Node(null, name, dotted, "external-group", StageMiddleware, L($"{origin}（{where}）", $"{origin} ({where})") + (desc is null ? "" : L("：", ": ") + desc), [], s.Path, line));
         }
         foreach (var n in posts.SelectMany(p => p)) if (n.SymbolId is { } id && x.ById.TryGetValue(id, out var ps)) tailSymbols.Add(ps);
 
@@ -199,7 +201,7 @@ public static partial class PythonFrameworkFlow
                 var configured = Classes(key);
                 foreach (var (dotted, pos) in configured ?? defaults)
                 {
-                    var src = configured is null ? $"{what}（DRF 默认 {key}）" : $"{what}（{key}，{Py.Where(s.Path, text, pos)}）";
+                    var src = configured is null ? L($"{what}（DRF 默认 {key}）", $"{what} (DRF default {key})") : L($"{what}（{key}，{Py.Where(s.Path, text, pos)}）", $"{what} ({key}, {Py.Where(s.Path, text, pos)})");
                     src += extra ?? "";
                     var name = LastSegment(dotted);
                     int? line = configured is null ? null : LineAt(text, pos);
@@ -213,21 +215,21 @@ public static partial class PythonFrameworkFlow
                         else
                         {
                             (actor == StageTail ? tailSymbols : interceptorSymbols).Add(cls);
-                            into.Add(Node(cls.Id, cls.Name, cls.QualifiedName, "call", actor, src + $"；没有 {method}，用基类的", [], configured is null ? null : s.Path, line));
+                            into.Add(Node(cls.Id, cls.Name, cls.QualifiedName, "call", actor, src + L($"；没有 {method}，用基类的", $"; no {method}, uses the base class's"), [], configured is null ? null : s.Path, line));
                         }
                         continue;
                     }
-                    var desc = KnownDrfClasses.GetValueOrDefault(name);
-                    into.Add(Node(null, name, dotted, "external-group", actor, src + (desc is null ? "" : "：" + desc), [], configured is null ? null : s.Path, line));
+                    var desc = KnownDrfClasses(name);
+                    into.Add(Node(null, name, dotted, "external-group", actor, src + (desc is null ? "" : L("：", ": ") + desc), [], configured is null ? null : s.Path, line));
                 }
             }
-            AddClasses("DEFAULT_AUTHENTICATION_CLASSES", "认证", "authenticate", StageInterceptor,
+            AddClasses("DEFAULT_AUTHENTICATION_CLASSES", L("认证", "Authentication"), "authenticate", StageInterceptor,
                 [("rest_framework.authentication.SessionAuthentication", 0), ("rest_framework.authentication.BasicAuthentication", 0)], interceptors,
-                "；按顺序试，第一个返回 (user, auth) 的生效");
-            AddClasses("DEFAULT_PERMISSION_CLASSES", "权限", "has_permission", StageInterceptor, [("rest_framework.permissions.AllowAny", 0)], interceptors,
-                "；全部通过才进视图方法");
+                L("；按顺序试，第一个返回 (user, auth) 的生效", "; tried in order, the first to return (user, auth) wins"));
+            AddClasses("DEFAULT_PERMISSION_CLASSES", L("权限", "Permission"), "has_permission", StageInterceptor, [("rest_framework.permissions.AllowAny", 0)], interceptors,
+                L("；全部通过才进视图方法", "; all must pass before the view method runs"));
             if (Classes("DEFAULT_THROTTLE_CLASSES") is not null)
-                AddClasses("DEFAULT_THROTTLE_CLASSES", "限流", "allow_request", StageInterceptor, [], interceptors);
+                AddClasses("DEFAULT_THROTTLE_CLASSES", L("限流", "Throttling"), "allow_request", StageInterceptor, [], interceptors);
             // 收尾：出错时的 EXCEPTION_HANDLER，再是渲染器（错误响应也要渲染）
             if (drfConf is not null && drfConf.TryGetValue("EXCEPTION_HANDLER", out var eh) && StringLiterals(eh.Value).FirstOrDefault() is { Value.Length: > 0 } ehv)
             {
@@ -235,53 +237,66 @@ public static partial class PythonFrameworkFlow
                 if (x.ResolveDotted(ehv.Value).Symbol is { Kind: SymbolKind.Function } fn)
                 {
                     tailSymbols.Add(fn);
-                    drfTail.Add(x.FunctionNode(fn, StageTail, $"出错时：DRF EXCEPTION_HANDLER（{where}），把异常变成错误响应", s.Path, LineAt(text, eh.Pos)));
+                    drfTail.Add(x.FunctionNode(fn, StageTail, L($"出错时：DRF EXCEPTION_HANDLER（{where}），把异常变成错误响应", $"On error: DRF EXCEPTION_HANDLER ({where}), turns exceptions into error responses"), s.Path, LineAt(text, eh.Pos)));
                 }
-                else drfTail.Add(Node(null, LastSegment(ehv.Value), ehv.Value, "external-group", StageTail, $"出错时：DRF EXCEPTION_HANDLER（{where}）", [], s.Path, LineAt(text, eh.Pos)));
+                else drfTail.Add(Node(null, LastSegment(ehv.Value), ehv.Value, "external-group", StageTail, L($"出错时：DRF EXCEPTION_HANDLER（{where}）", $"On error: DRF EXCEPTION_HANDLER ({where})"), [], s.Path, LineAt(text, eh.Pos)));
             }
             if (Classes("DEFAULT_RENDERER_CLASSES") is not null)
-                AddClasses("DEFAULT_RENDERER_CLASSES", "渲染响应", "render", StageTail, [], drfTail, "；按 Accept 协商选一个");
+                AddClasses("DEFAULT_RENDERER_CLASSES", L("渲染响应", "Render response"), "render", StageTail, [], drfTail, L("；按 Accept 协商选一个", "; one is chosen by Accept negotiation"));
             else
-                drfTail.Add(Node(null, "JSONRenderer / BrowsableAPIRenderer", "rest_framework.renderers", "external-group", StageTail, "渲染响应（DRF 默认 DEFAULT_RENDERER_CLASSES，按 Accept 协商）", [], null, null));
+                drfTail.Add(Node(null, "JSONRenderer / BrowsableAPIRenderer", "rest_framework.renderers", "external-group", StageTail, L("渲染响应（DRF 默认 DEFAULT_RENDERER_CLASSES，按 Accept 协商）", "Render response (DRF default DEFAULT_RENDERER_CLASSES, chosen by Accept negotiation)"), [], null, null));
         }
 
         // ---- 组装 ----
         var viewKids = new List<FlowNodeDto>(interceptors);
         viewKids.AddRange(drfTail);
-        var viewNode = x.Http.Count > 0 ? Node(null, "视图", "", "controllers", StageController, null, viewKids, null, null, x.Http.Count) : null;
+        var viewNode = x.Http.Count > 0 ? Node(null, L("视图", "Views"), "", "controllers", StageController, null, viewKids, null, null, x.Http.Count) : null;
         var rootKids = new List<FlowNodeDto>(middlewareNodes);
         if (viewNode is not null) rootKids.Add(viewNode);
         else rootKids.AddRange(viewKids);
         for (var i = errors.Count - 1; i >= 0; i--) rootKids.AddRange(errors[i]);
         for (var i = posts.Count - 1; i >= 0; i--) rootKids.AddRange(posts[i]);
         var rootActor = middlewareNodes.Count > 0 ? StageMiddleware : StageController;
-        var root = Node(null, "HTTP 请求", "", "entry", rootActor, null, rootKids, null, null);
+        var root = Node(null, L("HTTP 请求", "HTTP request"), "", "entry", rootActor, null, rootKids, null, null);
         var stages = new List<FrameworkStageDto>();
-        if (middlewareNodes.Count > 0) stages.Add(new FrameworkStageDto(StageMiddleware, "中间件", true, x.Dtos(middlewareSymbols)));
-        if (viewNode is not null) stages.Add(new FrameworkStageDto(StageController, "视图", true, x.EntrySymbols(x.Http)));
-        if (interceptors.Count > 0) stages.Add(new FrameworkStageDto(StageInterceptor, "DRF 认证 / 权限", true, x.Dtos(interceptorSymbols)));
-        if (drfTail.Count > 0 || posts.Any(p => p.Count > 0) || errors.Any(e => e.Count > 0)) stages.Add(new FrameworkStageDto(StageTail, "收尾", true, x.Dtos(tailSymbols)));
+        if (middlewareNodes.Count > 0) stages.Add(new FrameworkStageDto(StageMiddleware, L("中间件", "Middleware"), true, x.Dtos(middlewareSymbols)));
+        if (viewNode is not null) stages.Add(new FrameworkStageDto(StageController, L("视图", "Views"), true, x.EntrySymbols(x.Http)));
+        if (interceptors.Count > 0) stages.Add(new FrameworkStageDto(StageInterceptor, L("DRF 认证 / 权限", "DRF authentication / permissions"), true, x.Dtos(interceptorSymbols)));
+        if (drfTail.Count > 0 || posts.Any(p => p.Count > 0) || errors.Any(e => e.Count > 0)) stages.Add(new FrameworkStageDto(StageTail, L("收尾", "Teardown"), true, x.Dtos(tailSymbols)));
 
         // ---- Notes ----
-        notes.Add($"认出 Django：{Py.Where(s.Path, text, s.Pos)} MIDDLEWARE（{items.Count} 个）；中间件按列表顺序，请求从上往下经过，响应倒序往回"
-                  + "（get_response 之后的部分、process_response 放在收尾，process_exception 在收尾「出错时」，都倒序）");
+        notes.Add(L($"认出 Django：{Py.Where(s.Path, text, s.Pos)} MIDDLEWARE（{items.Count} 个）；中间件按列表顺序，请求从上往下经过，响应倒序往回"
+                    + "（get_response 之后的部分、process_response 放在收尾，process_exception 在收尾「出错时」，都倒序）",
+                    $"Recognized Django: {Py.Where(s.Path, text, s.Pos)} MIDDLEWARE ({items.Count}); middleware runs in list order, top to bottom for the request and in reverse for the response"
+                    + " (the part after get_response and process_response are in teardown, process_exception under 'On error' in teardown, all in reverse order)"));
         if (s.OtherFiles.Count > 0)
-            notes.Add($"另有 {string.Join("、", s.OtherFiles.Select(Py.FileName).Distinct())} 也定义 / 改了 MIDDLEWARE（按环境覆盖或追加），没画；以 {file} 为准");
-        if (RootUrlConf().Match(text) is { Success: true } urls) notes.Add($"路由：ROOT_URLCONF = {urls.Groups[1].Value}，{x.Http.Count} 个 HTTP 入口");
-        if (viewNode is null) notes.Add("没有发现 HTTP 入口（urls.py 里的 path / re_path、DRF router.register）");
+        {
+            var otherFiles = string.Join(ListSep, s.OtherFiles.Select(Py.FileName).Distinct());
+            notes.Add(L($"另有 {otherFiles} 也定义 / 改了 MIDDLEWARE（按环境覆盖或追加），没画；以 {file} 为准", $"{otherFiles} also define / modify MIDDLEWARE (per-environment overrides or additions), not drawn; {file} is used"));
+        }
+        if (RootUrlConf().Match(text) is { Success: true } urls) notes.Add(L($"路由：ROOT_URLCONF = {urls.Groups[1].Value}，{x.Http.Count} 个 HTTP 入口", $"Routing: ROOT_URLCONF = {urls.Groups[1].Value}, {Plural(x.Http.Count, "HTTP entry point", "HTTP entry points")}"));
+        if (viewNode is null) notes.Add(L("没有发现 HTTP 入口（urls.py 里的 path / re_path、DRF router.register）", "No HTTP entry points found (path / re_path in urls.py, DRF router.register)"));
         if (isDrf)
         {
-            notes.Add((drfMatch.Success ? $"认出 DRF（{Py.Where(s.Path, text, drfMatch.Index)} REST_FRAMEWORK）" : "认出 DRF（INSTALLED_APPS 里有 rest_framework，没配 REST_FRAMEWORK）")
-                      + "：认证 / 权限 / 限流在 APIView.initial() 里执行（URL 路由之后、视图方法之前），EXCEPTION_HANDLER 与渲染器在收尾");
+            notes.Add((drfMatch.Success
+                          ? L($"认出 DRF（{Py.Where(s.Path, text, drfMatch.Index)} REST_FRAMEWORK）", $"Recognized DRF ({Py.Where(s.Path, text, drfMatch.Index)} REST_FRAMEWORK)")
+                          : L("认出 DRF（INSTALLED_APPS 里有 rest_framework，没配 REST_FRAMEWORK）", "Recognized DRF (rest_framework in INSTALLED_APPS, no REST_FRAMEWORK configured)"))
+                      + L("：认证 / 权限 / 限流在 APIView.initial() 里执行（URL 路由之后、视图方法之前），EXCEPTION_HANDLER 与渲染器在收尾",
+                          ": authentication / permissions / throttling run in APIView.initial() (after URL routing, before the view method); EXCEPTION_HANDLER and renderers are in teardown"));
             var missing = new[] { "DEFAULT_AUTHENTICATION_CLASSES", "DEFAULT_PERMISSION_CLASSES", "DEFAULT_RENDERER_CLASSES", "EXCEPTION_HANDLER" }
                 .Where(k => drfConf is null || !drfConf.ContainsKey(k)).ToList();
-            if (missing.Count > 0) notes.Add($"没配 {string.Join("、", missing)}：画的是 DRF 默认值");
+            if (missing.Count > 0)
+            {
+                var missingList = string.Join(ListSep, missing);
+                notes.Add(L($"没配 {missingList}：画的是 DRF 默认值", $"{missingList} not configured: DRF defaults are drawn"));
+            }
             var overrides = DrfOverrides(x);
             if (overrides.Count > 0)
-                notes.Add("视图自己设的（覆盖上面的默认）：" + string.Join("、", overrides.OrderBy(o => o.Key, StringComparer.Ordinal).Select(o => $"{o.Key} {o.Value} 个")));
+                notes.Add(L("视图自己设的（覆盖上面的默认）：", "Set by views themselves (overriding the defaults above): ")
+                          + string.Join(ListSep, overrides.OrderBy(o => o.Key, StringComparer.Ordinal).Select(o => L($"{o.Key} {o.Value} 个", $"{o.Key} ×{o.Value}"))));
         }
-        else notes.Add("没用 DRF：视图函数 / 类视图直接处理请求");
-        return Assemble(x.Container, "HTTP 请求", root, stages, [], notes, rootActor == StageMiddleware ? "中间件" : "视图");
+        else notes.Add(L("没用 DRF：视图函数 / 类视图直接处理请求", "DRF not used: view functions / class-based views handle requests directly"));
+        return Assemble(x.Container, L("HTTP 请求", "HTTP request"), root, stages, [], notes, rootActor == StageMiddleware ? L("中间件", "Middleware") : L("视图", "Views"));
     }
 
     /// <summary>HTTP 入口所在的视图类（或函数视图的装饰器）里自己设了 xxx_classes 的个数。</summary>

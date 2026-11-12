@@ -1,5 +1,6 @@
 // 编辑器 CodeLens（方法上方"被 N 处调用 · 调用 M 个 · 影响范围"）的纯逻辑：文案、行号漂移时隐藏、按文件缓存。
 // 不 import vscode，方便单测；codeLens.ts 把这里算出的 LensSpec 原样搬进 vscode.CodeLens。
+import { L } from "../webview/l10n";
 import type { FileLensDto, SymbolDto, SymbolLensDto } from "../webview/types";
 
 export type LensKind = "entry" | "callers" | "tests" | "callees" | "impact";
@@ -20,17 +21,22 @@ export interface MethodLenses {
   lenses: LensSpec[];
 }
 
-export const StaleSuffix = "（索引已过期）";
+export const StaleSuffix = L("（索引已过期）", " (index out of date)");
 /** 每行第一条前面的标识：和语言插件自己的 CodeLens（"2 个引用"）区分开。ctg = Codetrail Graph 的简写，比全名短。 */
 export const BrandPrefix = "ctg: ";
-const StaleTooltip = "文件在索引之后改过，数字和行号可能对不上；保存后会增量索引。";
+const StaleTooltip = L("文件在索引之后改过，数字和行号可能对不上；保存后会增量索引。", "The file changed after indexing, so counts and line numbers may be off; it will be re-indexed incrementally on save.");
 
 /** "被 N 处调用" 那一条的标题：调用方个数和处数不同时两个都写；都是 0 写"没有调用方"（找死代码用）。 */
 export function callersTitle(callers: number, callSites: number): string {
   const sites = Math.max(callers, callSites);
-  if (sites === 0) return "没有调用方";
-  if (callers > 0 && callers !== sites) return `被 ${callers} 个方法调用 ${sites} 处`;
-  return `被 ${sites} 处调用`;
+  if (sites === 0) return L("没有调用方", "no callers");
+  if (callers > 0 && callers !== sites) return L(`被 ${callers} 个方法调用 ${sites} 处`, `${plural(callers, "caller")} · ${plural(sites, "call site")}`);
+  return L(`被 ${sites} 处调用`, plural(sites, "caller"));
+}
+
+/** 英文计数：1 caller / 3 callers。 */
+function plural(n: number, word: string): string {
+  return `${n} ${n === 1 ? word : `${word}s`}`;
 }
 
 /**
@@ -39,12 +45,18 @@ export function callersTitle(callers: number, callSites: number): string {
  */
 export function lensSpecs(item: SymbolLensDto, stale: boolean): LensSpec[] {
   const out: LensSpec[] = [];
-  if (item.isEntry) out.push({ kind: "entry", title: "入口", tooltip: "这个方法本身是入口（HTTP / 任务 / 命令 / 消息处理…），由框架调用。", clickable: false });
+  if (item.isEntry) out.push({ kind: "entry", title: L("入口", "entry"), tooltip: L("这个方法本身是入口（HTTP / 任务 / 命令 / 消息处理…），由框架调用。", "This method is itself an entry (HTTP / job / command / message handler…), called by the framework."), clickable: false });
 
   const sites = Math.max(item.callers, item.callSites);
   const callersTip = sites === 0
-    ? `索引里没有找到调用方（不含测试）${item.isEntry ? "；它是入口，由框架调用" : "：可能是死代码，也可能经反射 / 依赖注入 / 动态调用"}。`
-    : `直接调用方 ${item.callers} 个，共 ${sites} 处（不含测试）。点开列出调用方，选一个跳到调用处。`;
+    ? L(
+      `索引里没有找到调用方（不含测试）${item.isEntry ? "；它是入口，由框架调用" : "：可能是死代码，也可能经反射 / 依赖注入 / 动态调用"}。`,
+      `No callers found in the index (excluding tests)${item.isEntry ? "; it is an entry, called by the framework" : ": possibly dead code, or called via reflection / dependency injection / dynamic invocation"}.`,
+    )
+    : L(
+      `直接调用方 ${item.callers} 个，共 ${sites} 处（不含测试）。点开列出调用方，选一个跳到调用处。`,
+      `${plural(item.callers, "direct caller")}, ${plural(sites, "call site")} in total (excluding tests). Click to list callers and pick one to jump to its call site.`,
+    );
   out.push({
     kind: "callers",
     title: callersTitle(item.callers, item.callSites) + (stale ? StaleSuffix : ""),
@@ -53,21 +65,29 @@ export function lensSpecs(item: SymbolLensDto, stale: boolean): LensSpec[] {
   });
 
   if (item.testCallers > 0) {
-    out.push({ kind: "tests", title: `测试 ${item.testCallers}`, tooltip: `测试代码里有 ${item.testCallers} 个调用方。点开列出全部调用方（含测试）。`, clickable: true });
+    out.push({ kind: "tests", title: L(`测试 ${item.testCallers}`, plural(item.testCallers, "test")), tooltip: L(`测试代码里有 ${item.testCallers} 个调用方。点开列出全部调用方（含测试）。`, `${plural(item.testCallers, "caller")} in test code. Click to list all callers (including tests).`), clickable: true });
   }
 
   const dispatches = item.dispatches ?? 0;
   out.push({
     kind: "callees",
-    title: `调用 ${item.callees} 个` + (dispatches > 0 ? ` · 分派 ${dispatches}` : ""),
+    title: L(`调用 ${item.callees} 个`, `calls ${item.callees}`) + (dispatches > 0 ? L(` · 分派 ${dispatches}`, ` · dispatch ${dispatches}`) : ""),
     tooltip: item.callees > 0
-      ? `按源码顺序调用了 ${item.callees} 个（调用大纲第一层，含框架调用）。点开选一个跳到调用处。` +
-        (dispatches > 0 ? `\n经分派（Send / Publish 一类，不是直接引用）到 ${dispatches} 个 Handler：列表里的「↳ … · 经分派」一项直接跳到 Handler。` : "")
-      : "这个方法里没有找到调用。",
+      ? L(
+        `按源码顺序调用了 ${item.callees} 个（调用大纲第一层，含框架调用）。点开选一个跳到调用处。`,
+        `Calls ${plural(item.callees, "callee")} in source order (first level of the Call Outline, including framework calls). Click to pick one and jump to its call site.`,
+      ) +
+        (dispatches > 0
+          ? L(
+            `\n经分派（Send / Publish 一类，不是直接引用）到 ${dispatches} 个 Handler：列表里的「↳ … · 经分派」一项直接跳到 Handler。`,
+            `\nDispatches (Send / Publish style, not a direct reference) to ${plural(dispatches, "Handler")}: the "↳ … · via dispatch" items in the list jump straight to the Handler.`,
+          )
+          : "")
+      : L("这个方法里没有找到调用。", "No calls were found in this method."),
     clickable: item.callees > 0,
   });
 
-  out.push({ kind: "impact", title: "影响范围", tooltip: "在侧边栏「影响范围」里以这个方法为根：谁调用了它、一路影响到哪些入口。", clickable: true });
+  out.push({ kind: "impact", title: L("影响范围", "Impact"), tooltip: L("在侧边栏「影响范围」里以这个方法为根：谁调用了它、一路影响到哪些入口。", "Open this method as the root of the Impact sidebar: who calls it, and which entries it ultimately affects."), clickable: true });
   return out;
 }
 

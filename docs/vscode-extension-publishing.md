@@ -1,6 +1,6 @@
 # CodeTrail Graph：发布到 VS Code Marketplace
 
-当前发布版本为 **0.1.1**，沿用扩展 ID `164910441.codetrail-graph`。索引格式为 **12**，升级后旧索引会自动重建；更新包必须同时包含本轮后端与 Webview，不能只替换前端产物。
+当前发布版本为 **0.2.0**，沿用扩展 ID `164910441.codetrail-graph`。索引格式为 **13**，升级后旧索引会自动重建；更新包必须同时包含本轮后端与 Webview，不能只替换前端产物。
 
 ## 1. 名称、身份和图标
 
@@ -44,7 +44,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\package-all.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\publish.ps1 -Rid win-x64 -Out dist
 Set-Location .\extension
 npm run package -- --target win32-x64 --dist dist
-code --install-extension .\codetrail-graph-win32-x64-0.1.1.vsix --force
+code --install-extension .\codetrail-graph-win32-x64-0.2.0.vsix --force
 ```
 
 完全退出并重启 VS Code，验证活动栏图标、命令、首次索引、调用图、服务启动 / 停止；其他平台也应在对应系统上实际验证，交叉打包成功不代表运行验证通过。
@@ -66,7 +66,7 @@ Roslyn worker 显式引用 `System.Security.Cryptography.Pkcs` 和 `System.Secur
 在 `extension` 目录，完成 `vsce login` 后执行：
 
 ```powershell
-npx vsce publish --packagePath .\codetrail-graph-win32-x64-0.1.1.vsix .\codetrail-graph-linux-x64-0.1.1.vsix .\codetrail-graph-linux-arm64-0.1.1.vsix .\codetrail-graph-darwin-x64-0.1.1.vsix .\codetrail-graph-darwin-arm64-0.1.1.vsix
+npx vsce publish --packagePath .\codetrail-graph-win32-x64-0.2.0.vsix .\codetrail-graph-linux-x64-0.2.0.vsix .\codetrail-graph-linux-arm64-0.2.0.vsix .\codetrail-graph-darwin-x64-0.2.0.vsix .\codetrail-graph-darwin-arm64-0.2.0.vsix
 ```
 
 仅发布 Windows 时，只保留 Windows 的路径。上传预构建的 VSIX，不要直接运行不带 `--packagePath` 的 `vsce publish`：本项目的打包脚本负责把对应平台的后端放入扩展，循环构建后工作区的 `server` 只保留最后一个平台。
@@ -78,8 +78,9 @@ npx vsce publish --packagePath .\codetrail-graph-win32-x64-0.1.1.vsix .\codetrai
 ## 5. 后续升级
 
 1. 在 `extension` 目录执行 `npm version patch --no-git-tag-version`（例如 `0.1.0` → `0.1.1`），同步 manifest 与 lockfile。
-2. 更新扩展 README 的版本示例与相关发布说明。
-3. 重新测试、构建、打包所有要维护的平台，并用新版本文件名上传。
-4. 不要覆盖旧版 VSIX 内容后仍沿用已发布的相同版本。不同平台的同一次发布使用相同版本号。
+2. 在 `extension/CHANGELOG.md` 最上面加一节新版本（版本号 + 日期），中英文各写两部分：**改了什么**；**升级后需要用户做什么**（例如要不要全量重建索引、缓存会不会重新生成、配置要不要改；不用做就写"不用操作"）。只写用户能感知到的变化，不写内部实现。市场页面的 Changelog 标签显示的就是这个文件。
+3. 更新扩展 README 的版本示例，并把 README 里的“更新”小节换成新版本的两三条要点（详细内容链接到 CHANGELOG）。
+4. 重新测试、构建、打包所有要维护的平台，并用新版本文件名上传。
+5. 不要覆盖旧版 VSIX 内容后仍沿用已发布的相同版本。不同平台的同一次发布使用相同版本号。
 
 仓库链接仍指向 CodeAtlas 项目；更改市场品牌不需要改 GitHub 仓库名称。

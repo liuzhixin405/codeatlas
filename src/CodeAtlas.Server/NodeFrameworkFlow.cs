@@ -71,7 +71,7 @@ public static partial class NodeFrameworkFlow
         var grpc = x.Entries.Count(e => e.Kind == "grpc");
         var prefaceNotes = new List<string>();
         if (declared is not null && (app is null || app.Framework != declared))
-            prefaceNotes.Add($"package.json 依赖 {FrameworkName(declared)}，但没找到创建应用的地方（{DeclHint(declared)}）");
+            prefaceNotes.Add(L($"package.json 依赖 {FrameworkName(declared)}，但没找到创建应用的地方（{DeclHint(declared)}）", $"package.json depends on {FrameworkName(declared)}, but no app creation was found ({DeclHint(declared)})"));
 
         if (app is not null)
         {
@@ -82,12 +82,12 @@ public static partial class NodeFrameworkFlow
                 _ => BuildExpressLike(x, app),
             };
             var extra = new List<string>(prefaceNotes);
-            if (grpc > 0) extra.Add($"另有 {grpc} 个 gRPC 方法（server.addService），不经过 {FrameworkName(app.Framework)} 的这条链");
+            if (grpc > 0) extra.Add(L($"另有 {grpc} 个 gRPC 方法（server.addService），不经过 {FrameworkName(app.Framework)} 的这条链", $"Plus {Plural(grpc, "gRPC method", "gRPC methods")} (server.addService) outside this {FrameworkName(app.Framework)} chain"));
             return extra.Count == 0 ? flow : flow with { Notes = [.. extra, .. flow.Notes] };
         }
         if (grpc > 0 || Dep("@grpc/grpc-js") || Dep("grpc"))
             return BuildGrpc(x, grpc, prefaceNotes);
-        prefaceNotes.Add("没认出 Node 的 HTTP 框架（package.json 里没有 express / koa / fastify / @nestjs/core，源码里也没有创建应用的地方），也没有 gRPC 服务");
+        prefaceNotes.Add(L("没认出 Node 的 HTTP 框架（package.json 里没有 express / koa / fastify / @nestjs/core，源码里也没有创建应用的地方），也没有 gRPC 服务", "No Node HTTP framework recognized (package.json has no express / koa / fastify / @nestjs/core, and the source creates no app), and no gRPC services either"));
         return Empty(x.Container, prefaceNotes);
     }
 
@@ -130,21 +130,21 @@ public static partial class NodeFrameworkFlow
     {
         var services = x.Entries.Where(e => e.Kind == "grpc" && e.Route is not null)
             .GroupBy(e => e.Route![..Math.Max(0, e.Route!.IndexOf('/'))], StringComparer.Ordinal)
-            .Select(g => $"{(g.Key.Length == 0 ? "?" : g.Key)} {g.Count()} 个方法").ToList();
+            .Select(g => L($"{(g.Key.Length == 0 ? "?" : g.Key)} {g.Count()} 个方法", $"{(g.Key.Length == 0 ? "?" : g.Key)} {Plural(g.Count(), "method", "methods")}")).ToList();
         var files = x.Entries.Where(e => e.Kind == "grpc").Select(e => MapSymbol.FileName(e.File)).Distinct(StringComparer.Ordinal).ToList();
         notes.Add(count > 0
-            ? $"认出 gRPC 服务（@grpc/grpc-js 的 server.addService，{string.Join("、", files)}）：{string.Join("、", services)}"
-            : "依赖里有 @grpc/grpc-js，但没找到 server.addService 注册的服务方法");
-        notes.Add("grpc-js 服务端没有中间件链：请求直接进 addService 注册的处理函数，框架流程只有「服务方法」一列，具体调用看入口流程");
+            ? L($"认出 gRPC 服务（@grpc/grpc-js 的 server.addService，{string.Join("、", files)}）：{string.Join("、", services)}", $"Recognized gRPC services (@grpc/grpc-js server.addService, {string.Join(", ", files)}): {string.Join(", ", services)}")
+            : L("依赖里有 @grpc/grpc-js，但没找到 server.addService 注册的服务方法", "@grpc/grpc-js is a dependency, but no service methods registered via server.addService were found"));
+        notes.Add(L("grpc-js 服务端没有中间件链：请求直接进 addService 注册的处理函数，框架流程只有「服务方法」一列，具体调用看入口流程", "The grpc-js server has no middleware chain: requests go straight to the handlers registered with addService, so the framework flow has only the \"Service methods\" column; see the entry flow for the actual calls"));
         // new grpc.Server({ interceptors: [...] })：服务端拦截器只提一句
         foreach (var file in x.ScriptFiles)
             if (x.Text(file) is { } t && Regex.Match(t.Code, @"new\s+[\w$.]*Server\s*\(\s*\{[^}]*\binterceptors\s*:\s*\[([^\]]*)\]") is { Success: true } m)
-                notes.Add($"{MapSymbol.FileName(file)} 的 Server 选项里配置了服务端拦截器（{string.Join("、", m.Groups[1].Value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))}），没画");
+                notes.Add(L($"{MapSymbol.FileName(file)} 的 Server 选项里配置了服务端拦截器（{string.Join("、", m.Groups[1].Value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))}），没画", $"{MapSymbol.FileName(file)} configures server interceptors in the Server options ({string.Join(", ", m.Groups[1].Value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))}); not drawn"));
         if (count == 0) return Empty(x.Container, notes);
-        var placeholder = Node(null, "服务方法", "", "controllers", StageController, null, [], null, null, count);
-        var root = Node(null, "gRPC 调用", "", "entry", StageController, null, [placeholder], null, null);
-        var stages = new List<FrameworkStageDto> { new(StageController, "服务方法", true, x.EntrySymbols("grpc")) };
-        return Assemble(x.Container, "gRPC 调用", root, stages, [], notes);
+        var placeholder = Node(null, L("服务方法", "Service methods"), "", "controllers", StageController, null, [], null, null, count);
+        var root = Node(null, L("gRPC 调用", "gRPC call"), "", "entry", StageController, null, [placeholder], null, null);
+        var stages = new List<FrameworkStageDto> { new(StageController, L("服务方法", "Service methods"), true, x.EntrySymbols("grpc")) };
+        return Assemble(x.Container, L("gRPC 调用", "gRPC call"), root, stages, [], notes);
     }
 
     // ================= 共用的上下文 =================

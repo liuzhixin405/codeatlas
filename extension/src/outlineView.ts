@@ -1,6 +1,8 @@
 // 侧边栏「调用大纲」树视图：vscode 薄层。逻辑在 outlineModel.ts（步骤 → 条目）与 outlineFollow.ts（跟随光标）；
 // 光标 → 当前方法由 cursorFollow.ts 的共享来源解析（与「影响范围」共用一次 symbolAt），这里只订阅。
 import * as vscode from "vscode";
+import { L } from "../webview/l10n";
+import { staleNotice } from "../webview/staleNotice";
 import type { OutlineDto } from "../webview/types";
 import { currentPos, type SharedFollow } from "./cursorFollow";
 import type { FollowResult, FollowSubscription, OutlineClient, OutlineState } from "./outlineFollow";
@@ -57,7 +59,7 @@ class CallOutlineController implements vscode.TreeDataProvider<OutlineNode>, Cal
       vscode.window.registerFileDecorationProvider({
         onDidChangeFileDecorations: decorations.event,
         provideFileDecoration: (uri) => uri.scheme === DecorationScheme && uri.path.startsWith("/external")
-          ? new vscode.FileDecoration(undefined, "框架 / 第三方调用", new vscode.ThemeColor("disabledForeground"))
+          ? new vscode.FileDecoration(undefined, L("框架 / 第三方调用", "Framework / third-party call"), new vscode.ThemeColor("disabledForeground"))
           : undefined,
       }),
       this.tree.onDidChangeVisibility((e) => this.follower.setActive(e.visible, currentPos())),
@@ -90,7 +92,7 @@ class CallOutlineController implements vscode.TreeDataProvider<OutlineNode>, Cal
     item.iconPath = new vscode.ThemeIcon(spec.icon, spec.iconColor ? new vscode.ThemeColor(spec.iconColor) : undefined);
     item.contextValue = spec.contextValue;
     if (spec.dim && node.type === "step") item.resourceUri = vscode.Uri.from({ scheme: DecorationScheme, path: `/external/${node.step.order}` });
-    if (spec.clickable) item.command = { command: "codeatlas.outline.open", title: "跳到调用处", arguments: [node] };
+    if (spec.clickable) item.command = { command: "codeatlas.outline.open", title: L("跳到调用处", "Go to Call Site"), arguments: [node] };
     return item;
   }
 
@@ -117,23 +119,26 @@ class CallOutlineController implements vscode.TreeDataProvider<OutlineNode>, Cal
         fresh.catch(() => { if (cache.get(symbolId) === fresh) cache.delete(symbolId); });
       }
       const outline = await p;
-      if (!outline) return [{ type: "info", text: "取不到这个方法的大纲", tooltip: "符号不在索引里了（重新索引过？），或服务版本过旧还没有 outline 接口。", icon: "warning" }];
+      // 根方法的结果涉及的文件在上次索引后改过：视图顶上一行提示（不弹窗；保存 / 外部改动触发的增量索引完成后随刷新消失）
+      if (ancestors.size === 1 && symbolId === this.root?.symbol.id) this.tree.message = staleNotice(outline?.staleFiles)?.text;
+      if (!outline) return [{ type: "info", text: L("取不到这个方法的大纲", "Cannot get the outline of this method"), tooltip: L("符号不在索引里了（重新索引过？），或服务版本过旧还没有 outline 接口。", "The symbol is no longer in the index (re-indexed?), or the server version is too old to have the outline API."), icon: "warning" }];
       return outlineChildren(outline, ancestors);
     } catch (e) {
       this.host.log(`调用大纲加载失败：${e}`);
-      return [{ type: "info", text: "加载失败，点刷新重试", tooltip: String(e), icon: "error" }];
+      return [{ type: "info", text: L("加载失败，点刷新重试", "Failed to load; click Refresh to retry"), tooltip: String(e), icon: "error" }];
     }
   }
 
   private async fetchOutline(repoRoot: string, symbolId: number): Promise<OutlineDto | null> {
     const client = await this.host.connect(repoRoot);
-    if (!client) throw new Error("CodeTrail Graph 服务不可用");
+    if (!client) throw new Error(L("CodeTrail Graph 服务不可用", "CodeTrail Graph server unavailable"));
     return client.outline(symbolId, { externals: this.externals, tests: false });
   }
 
   // ---------- 跟随 ----------
 
   private apply(r: FollowResult): void {
+    this.tree.message = undefined;
     if (r.state === "method") {
       this.root = { type: "root", symbol: r.symbol, repoRoot: r.repoRoot };
       this.cache = new Map();
@@ -159,7 +164,7 @@ class CallOutlineController implements vscode.TreeDataProvider<OutlineNode>, Cal
 
   private syncPinned(): void {
     void vscode.commands.executeCommand("setContext", "codeatlas.outline.pinned", this.follower.pinned);
-    const tags = [this.follower.pinned ? "已固定" : "", this.externals ? "" : "不含框架调用"].filter(Boolean);
+    const tags = [this.follower.pinned ? L("已固定", "Pinned") : "", this.externals ? "" : L("不含框架调用", "Excluding framework calls")].filter(Boolean);
     this.tree.description = tags.length ? tags.join(" · ") : undefined;
   }
 
@@ -193,7 +198,7 @@ class CallOutlineController implements vscode.TreeDataProvider<OutlineNode>, Cal
 
   private async openInPanel(how: "graph" | "relations" = "graph"): Promise<void> {
     if (!this.root) {
-      void vscode.window.showInformationMessage("调用大纲里还没有方法：把光标放进一个方法。");
+      void vscode.window.showInformationMessage(L("调用大纲里还没有方法：把光标放进一个方法。", "No method in Call Outline yet: place the cursor inside a method."));
       return;
     }
     await this.host.openPanel(this.root.repoRoot, this.root.symbol.id, how);

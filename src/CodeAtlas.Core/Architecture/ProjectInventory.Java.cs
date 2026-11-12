@@ -301,7 +301,7 @@ public sealed partial class ProjectInventory
             {
                 ports.Add(8080);
                 var at = evidence.First(e => e.Note == "@SpringBootApplication");
-                portEvidence.Add(new Evidence(at.File, at.Line, "Spring Boot 缺省端口 8080"));
+                portEvidence.Add(new Evidence(at.File, at.Line, L("Spring Boot 缺省端口 8080", "Spring Boot default port 8080")));
             }
             ports.Sort();
             // 可部署：Spring Boot 应用、Dockerfile，或有 main 且没被别的模块依赖（被依赖的是库，里面的 main 多是演示）；纯父 pom、测试模块不是

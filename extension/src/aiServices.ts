@@ -1,6 +1,8 @@
 // AI 叙述服务的预设、SecretStorage 键名、端点工具函数。
 // 纯函数、不依赖 vscode / node，扩展宿主（src/）和页面（webview/）共用，测试直接导入。
 
+import { L } from "../webview/l10n";
+
 /** serve 的 --ai-provider：openai = OpenAI 兼容协议（llama-server / DeepSeek / 通义 / OpenAI 等）；anthropic = Claude Messages API。 */
 export type AiProvider = "openai" | "anthropic";
 
@@ -24,9 +26,9 @@ export interface AiServicePreset {
 
 /** 「CodeTrail Graph: 选择 AI 服务」里的预设。模型名只是默认值。 */
 export const AiServicePresets: readonly AiServicePreset[] = [
-  { id: "local", label: "本地 llama-server", provider: "openai", endpoint: "http://127.0.0.1:8080/v1", model: "qwen3.6-27b" },
+  { id: "local", label: L("本地 llama-server", "Local llama-server"), provider: "openai", endpoint: "http://127.0.0.1:8080/v1", model: "qwen3.6-27b" },
   { id: "deepseek", label: "DeepSeek", provider: "openai", endpoint: "https://api.deepseek.com/v1", model: "deepseek-chat" },
-  { id: "dashscope", label: "通义千问（阿里云百炼）", provider: "openai", endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus" },
+  { id: "dashscope", label: L("通义千问（阿里云百炼）", "Qwen (Alibaba Cloud Model Studio)"), provider: "openai", endpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus" },
   { id: "openai", label: "OpenAI", provider: "openai", endpoint: "https://api.openai.com/v1", model: "gpt-4o-mini" },
   { id: "anthropic", label: "Anthropic Claude", provider: "anthropic", endpoint: "https://api.anthropic.com/v1", model: "claude-sonnet-5-5" },
 ];
@@ -34,7 +36,7 @@ export const AiServicePresets: readonly AiServicePreset[] = [
 /** 已知联网服务的主机 → 叙述卡上的友好名。 */
 const KnownHosts: Record<string, string> = {
   "api.deepseek.com": "DeepSeek",
-  "dashscope.aliyuncs.com": "通义千问",
+  "dashscope.aliyuncs.com": L("通义千问", "Qwen"),
   "api.openai.com": "OpenAI",
   "api.anthropic.com": "Anthropic Claude",
 };
@@ -67,11 +69,11 @@ export function apiKeySecretKey(provider: string, endpoint: string): string {
 
 /** 叙述卡上的服务名：已知主机给友好名，回环给「本地」，其余显示主机。 */
 export function serviceName(provider: string | undefined, endpoint: string): string {
-  if (isLoopbackEndpoint(endpoint)) return "本地";
+  if (isLoopbackEndpoint(endpoint)) return L("本地", "Local");
   const host = endpointHost(endpoint);
   const known = KnownHosts[host];
   if (known) return known;
-  return provider === "anthropic" ? `${host}（Anthropic 协议）` : host;
+  return provider === "anthropic" ? L(`${host}（Anthropic 协议）`, `${host} (Anthropic protocol)`) : host;
 }
 
 /** 找出与当前设置一致的预设（provider + 端点主机 + 路径都一样）；没有返回 null。 */

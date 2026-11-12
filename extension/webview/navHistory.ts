@@ -1,3 +1,5 @@
+import { L } from "./l10n";
+import type { TrailData, TrailStep } from "./trail";
 /**
  * 面板的后退 / 前进（工具栏 ← →、Alt+← / Alt+→、鼠标侧键）：调用图换焦点、模块关系换中心、项目地图里切视图 / 钻进容器 / 选入口……
  * 每去一个地方记一条（key 标识"那个画面"，restore 把它重新画出来）。各模式自己的面包屑照旧，这里是跨模式的一条时间线。
@@ -11,6 +13,8 @@ export interface NavEntry {
   /** 按钮提示里的"后退到：…"。 */
   label: string;
   restore: () => Promise<void> | void;
+  /** 能分享 / 在别的机器上重放的形式（按限定名）；项目地图等没有的不进 trail。 */
+  share?: TrailStep;
 }
 
 export const MaxNavEntries = 100;
@@ -56,6 +60,21 @@ export class NavHistory {
     return true;
   }
 
+  /**
+   * 可分享的步骤（带 share 的条目，按时间顺序）与当前停在第几步：当前条目本身不可分享时取它之前最近的一条；
+   * 一条都没有时 at = -1。
+   */
+  trail(): TrailData {
+    const steps: TrailStep[] = [];
+    let at = -1;
+    this.entries.forEach((e, i) => {
+      if (!e.share) return;
+      steps.push(e.share);
+      if (i <= this.index) at = steps.length - 1;
+    });
+    return { steps, at };
+  }
+
   /** 切仓库：时间线清空。 */
   reset(): void {
     this.entries = [];
@@ -74,6 +93,6 @@ export class NavHistory {
 /** 按钮提示："后退到：OrderService.Place（Alt+←）"；没有可去的写"没有可后退的"。 */
 export function navTitle(direction: "back" | "forward", target: NavEntry | null): string {
   const key = direction === "back" ? "Alt+←" : "Alt+→";
-  if (!target) return direction === "back" ? `没有可后退的（${key}）` : `没有可前进的（${key}）`;
-  return `${direction === "back" ? "后退到" : "前进到"}：${target.label}（${key}）`;
+  if (!target) return direction === "back" ? L(`没有可后退的（${key}）`, `Nothing to go back to (${key})`) : L(`没有可前进的（${key}）`, `Nothing to go forward to (${key})`);
+  return L(`${direction === "back" ? "后退到" : "前进到"}：${target.label}（${key}）`, `${direction === "back" ? "Back to" : "Forward to"}: ${target.label} (${key})`);
 }

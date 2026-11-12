@@ -58,8 +58,8 @@ public static partial class FrontendFrameworkFlow
             if (reactRouter) BuildReactRouterRoutes();
             if (routeRows.Count == 0)
                 notes.Add(tanstack || reactRouter
-                    ? "路由：依赖里有路由库，但没找到路由定义（createRootRoute / createFileRoute / createBrowserRouter / <Routes>）"
-                    : "路由：没认出路由库（TanStack Router / React Router）");
+                    ? L("路由：依赖里有路由库，但没找到路由定义（createRootRoute / createFileRoute / createBrowserRouter / <Routes>）", "Routing: a router library is in the dependencies, but no route definitions were found (createRootRoute / createFileRoute / createBrowserRouter / <Routes>)")
+                    : L("路由：没认出路由库（TanStack Router / React Router）", "Routing: no router library recognized (TanStack Router / React Router)"));
         }
 
         private IEnumerable<string> FilesCalling(IReadOnlySet<string> names)
@@ -116,19 +116,19 @@ public static partial class FrontendFrameworkFlow
                 var kids = new List<FlowNodeDto>();
                 var parts = new List<string>();
                 var children = ChildrenOf(r);
-                if (r.IsRoot) parts.Add($"根路由（{Where(f, r.Pos)}）：所有页面的外壳");
+                if (r.IsRoot) parts.Add(L($"根路由（{Where(f, r.Pos)}）：所有页面的外壳", $"Root route ({Where(f, r.Pos)}): the shell of every page"));
                 else
                 {
                     var pathless = r.Id.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault()?.StartsWith('_') == true;
-                    parts.Add((pathless ? "无路径段的布局路由" : "布局路由") + $"（{Where(f, r.Pos)}）");
-                    if (children.Count > 0) parts.Add($"包住 {children.Count} 个子路由：{string.Join("、", children.Take(5).Select(c => c.Id))}" + (children.Count > 5 ? "…" : ""));
+                    parts.Add((pathless ? L("无路径段的布局路由", "Pathless layout route") : L("布局路由", "Layout route")) + L($"（{Where(f, r.Pos)}）", $" ({Where(f, r.Pos)})"));
+                    if (children.Count > 0) parts.Add(L($"包住 {children.Count} 个子路由：{string.Join("、", children.Take(5).Select(c => c.Id))}", $"wraps {Plural(children.Count, "child route", "child routes")}: {string.Join(", ", children.Take(5).Select(c => c.Id))}") + (children.Count > 5 ? "…" : ""));
                 }
                 foreach (var key in new[] { "beforeLoad", "loader" })
                 {
                     if (r.Opt(key) is not { } o) continue;
                     var (rows, guard) = HookRows(f, o.ValueStart, o.ValueEnd, StageRoute);
-                    var what = key == "beforeLoad" ? "beforeLoad（守卫）" : "loader（进路由前取数）";
-                    kids.Add(Node(null, what, key, "external-group", StageRoute, guard ?? (key == "beforeLoad" ? "进路由前执行：可 throw redirect 拦下" : "进路由前取数，取完才渲染"), Cap(rows, StageRoute), f.Path, f.LineOf(o.KeyPos)));
+                    var what = key == "beforeLoad" ? L("beforeLoad（守卫）", "beforeLoad (guard)") : L("loader（进路由前取数）", "loader (fetches data before entering the route)");
+                    kids.Add(Node(null, what, key, "external-group", StageRoute, guard ?? (key == "beforeLoad" ? L("进路由前执行：可 throw redirect 拦下", "Runs before entering the route: can throw redirect to block it") : L("进路由前取数，取完才渲染", "Fetches data before entering the route; renders once done")), Cap(rows, StageRoute), f.Path, f.LineOf(o.KeyPos)));
                 }
                 if (r.Opt("component") is { } comp)
                 {
@@ -137,13 +137,13 @@ public static partial class FrontendFrameworkFlow
                     {
                         var own = ComponentJsx(sym) is { } cj ? TagNames(cj.Jsx).ToHashSet(StringComparer.Ordinal) : [];
                         var renders = ComponentJsx(sym) is { } cj2 ? TagNames(cj2.Jsx).Where(n => !char.IsLower(n[0])).Distinct().Take(8).ToList() : [];
-                        kids.Add(Row(StageRoute, sym, Label(sym), (r.IsRoot ? "根组件" : "布局组件") + (renders.Count > 0 ? $"：渲染 {string.Join("、", renders)}" : "") + "（<Outlet/> 处放子路由）",
+                        kids.Add(Row(StageRoute, sym, Label(sym), (r.IsRoot ? L("根组件", "Root component") : L("布局组件", "Layout component")) + (renders.Count > 0 ? L($"：渲染 {string.Join("、", renders)}", $": renders {string.Join(", ", renders)}") : "") + L("（<Outlet/> 处放子路由）", " (child routes render at <Outlet/>)"),
                             CallRows(sym, StageRoute, own), sym.Path, sym.StartLine));
                     }
                     else
                     {
                         var tags = JsxIn(f.S, comp.ValueStart, comp.ValueEnd).SelectMany(TagNames).Where(n => !char.IsLower(n[0])).Distinct().Take(8).ToList();
-                        if (tags.Count > 0) parts.Add($"component 渲染 {string.Join("、", tags)}");
+                        if (tags.Count > 0) parts.Add(L($"component 渲染 {string.Join("、", tags)}", $"component renders {string.Join(", ", tags)}"));
                     }
                 }
                 foreach (var key in new[] { "errorComponent", "notFoundComponent", "pendingComponent" })
@@ -156,17 +156,17 @@ public static partial class FrontendFrameworkFlow
                     {
                         var sym = Resolve(f, name);
                         AddTail("route-error:" + f.Path + ":" + o.KeyPos, Row(StageTail, sym, $"errorComponent → {name}",
-                            $"路由出错时显示（{Where(f, o.KeyPos)}）：beforeLoad / loader / 渲染抛错都落到这里", [], sym?.Path ?? f.Path, sym?.StartLine ?? f.LineOf(o.KeyPos), sym is null ? ExternalQn(f, name) : null));
+                            L($"路由出错时显示（{Where(f, o.KeyPos)}）：beforeLoad / loader / 渲染抛错都落到这里", $"Shown on route error ({Where(f, o.KeyPos)}): errors from beforeLoad / loader / rendering all land here"), [], sym?.Path ?? f.Path, sym?.StartLine ?? f.LineOf(o.KeyPos), sym is null ? ExternalQn(f, name) : null));
                     }
                     else parts.Add($"{key} → {name}");
                 }
                 var module = modulesByPath.GetValueOrDefault(f.Path);
-                var label = r.IsRoot ? $"{FileName(f.Path)}（根路由）" : $"{Trim(r.Id)}（布局路由）";
-                routeRows.Add(Row(StageRoute, module, label, string.Join("；", parts), kids, f.Path, f.LineOf(r.Pos)));
+                var label = r.IsRoot ? L($"{FileName(f.Path)}（根路由）", $"{FileName(f.Path)} (root route)") : L($"{Trim(r.Id)}（布局路由）", $"{Trim(r.Id)} (layout route)");
+                routeRows.Add(Row(StageRoute, module, label, string.Join(L("；", "; "), parts), kids, f.Path, f.LineOf(r.Pos)));
             }
             var leafHooks = routes.Where(r => !IsLayout(r) && (r.Opt("beforeLoad") is not null || r.Opt("loader") is not null)).ToList();
-            notes.Add($"路由：TanStack Router，{routes.Count} 个路由定义（{routes.Select(r => r.File.Path).Distinct().Count()} 个文件）；画了根路由与 {layouts.Count(l => !l.IsRoot)} 个布局路由（按路径层级由外到内）"
-                      + (leafHooks.Count > 0 ? $"；另有 {leafHooks.Count} 个页面路由自带 beforeLoad / loader（只管自己，没画）" : ""));
+            notes.Add(L($"路由：TanStack Router，{routes.Count} 个路由定义（{routes.Select(r => r.File.Path).Distinct().Count()} 个文件）；画了根路由与 {layouts.Count(l => !l.IsRoot)} 个布局路由（按路径层级由外到内）", $"Routing: TanStack Router, {Plural(routes.Count, "route definition", "route definitions")} ({Plural(routes.Select(r => r.File.Path).Distinct().Count(), "file", "files")}); drew the root route and {Plural(layouts.Count(l => !l.IsRoot), "layout route", "layout routes")} (outer to inner by path depth)")
+                      + (leafHooks.Count > 0 ? L($"；另有 {leafHooks.Count} 个页面路由自带 beforeLoad / loader（只管自己，没画）", $"; {Plural(leafHooks.Count, "more page route has its", "more page routes have their")} own beforeLoad / loader (only for themselves; not drawn)") : ""));
         }
 
         /// <summary>beforeLoad / loader 的值：函数名就展开那个函数，内联箭头函数就取这段里的调用；附带守卫说明。</summary>
@@ -215,14 +215,14 @@ public static partial class FrontendFrameworkFlow
                 foreach (var r in routes.Where(r => r.ErrorElement is not null))
                 {
                     var sym = Resolve(r.File, r.ErrorElement!);
-                    AddTail("rr-error:" + r.File.Path + ":" + r.Pos, Row(StageTail, sym, $"errorElement → {r.ErrorElement}", $"路由出错时显示（{Where(r.File, r.Pos)}）：loader / action / 渲染抛错都落到这里",
+                    AddTail("rr-error:" + r.File.Path + ":" + r.Pos, Row(StageTail, sym, $"errorElement → {r.ErrorElement}", L($"路由出错时显示（{Where(r.File, r.Pos)}）：loader / action / 渲染抛错都落到这里", $"Shown on route error ({Where(r.File, r.Pos)}): errors from loader / action / rendering all land here"),
                         [], sym?.Path ?? r.File.Path, sym?.StartLine ?? r.File.LineOf(r.Pos), sym is null ? ExternalQn(r.File, r.ErrorElement!) : null));
                 }
-                var note = $"React Router 路由表（{Where(f, pos)}）：{all.Count} 条路由，{layoutRoutes.Count} 个布局路由"
-                           + (guardedLeaves.Count > 0 ? $"；另有 {guardedLeaves.Count} 条路由的 element 套了守卫组件（{string.Join("、", guardedLeaves.SelectMany(r => TagNames(r.Element!)).Where(n => GuardName().IsMatch(n)).Distinct().Take(3))}）" : "");
+                var note = L($"React Router 路由表（{Where(f, pos)}）：{all.Count} 条路由，{layoutRoutes.Count} 个布局路由", $"React Router route table ({Where(f, pos)}): {Plural(all.Count, "route", "routes")}, {Plural(layoutRoutes.Count, "layout route", "layout routes")}")
+                           + (guardedLeaves.Count > 0 ? L($"；另有 {guardedLeaves.Count} 条路由的 element 套了守卫组件（{string.Join("、", guardedLeaves.SelectMany(r => TagNames(r.Element!)).Where(n => GuardName().IsMatch(n)).Distinct().Take(3))}）", $"; the element of {Plural(guardedLeaves.Count, "more route", "more routes")} is wrapped in a guard component ({string.Join(", ", guardedLeaves.SelectMany(r => TagNames(r.Element!)).Where(n => GuardName().IsMatch(n)).Distinct().Take(3))})") : "");
                 routeRows.Add(Row(StageRoute, null, label, note, kids, f.Path, f.LineOf(pos), ExternalQn(f, label)));
             }
-            if (tables.Count > 0) notes.Add($"路由：React Router，{tables.Count} 张路由表；画了前三层里带子路由的布局路由，element 里的守卫组件单独成行");
+            if (tables.Count > 0) notes.Add(L($"路由：React Router，{tables.Count} 张路由表；画了前三层里带子路由的布局路由，element 里的守卫组件单独成行", $"Routing: React Router, {Plural(tables.Count, "route table", "route tables")}; drew layout routes with child routes in the top three levels; guard components in element get their own rows"));
         }
 
         private static IEnumerable<JsxNode> Descendants(JsxNode n) => n.Children.SelectMany(Descendants).Prepend(n);
@@ -281,18 +281,18 @@ public static partial class FrontendFrameworkFlow
                     string? guard = null;
                     if (sym is not null && File(sym.Path) is { } sf) { var (s, e) = sf.Span(sym.StartLine, sym.EndLine); guard = GuardNote(sf, s, e); }
                     var isGuard = guard is not null || GuardName().IsMatch(name);
-                    kids.Add(Row(StageRoute, sym, name, isGuard ? guard ?? "守卫组件：条件不满足时不渲染子路由" : "布局组件：<Outlet/> 处放子路由",
+                    kids.Add(Row(StageRoute, sym, name, isGuard ? guard ?? L("守卫组件：条件不满足时不渲染子路由", "Guard component: child routes are not rendered when the condition fails") : L("布局组件：<Outlet/> 处放子路由", "Layout component: child routes render at <Outlet/>"),
                         sym is not null && sym.Kind is SymbolKind.Function or SymbolKind.Method ? CallRows(sym, StageRoute, ComponentJsx(sym) is { } cj ? TagNames(cj.Jsx).ToHashSet(StringComparer.Ordinal) : null) : [],
                         sym?.Path ?? f.Path, sym?.StartLine ?? f.LineOf(r.Pos), sym is null ? ExternalQn(f, name) : null));
                 }
             if (r.Loader is { } l)
             {
                 var (rows, guard) = HookRows(f, l.Start, l.End, StageRoute);
-                kids.Add(Node(null, "loader（进路由前取数）", "loader", "external-group", StageRoute, guard ?? "进路由前取数，取完才渲染", Cap(rows, StageRoute), f.Path, f.LineOf(l.Start)));
+                kids.Add(Node(null, L("loader（进路由前取数）", "loader (fetches data before entering the route)"), "loader", "external-group", StageRoute, guard ?? L("进路由前取数，取完才渲染", "Fetches data before entering the route; renders once done"), Cap(rows, StageRoute), f.Path, f.LineOf(l.Start)));
             }
-            var children = r.Children.Select(c => c.Path ?? "（index）").ToList();
-            return Node(null, "布局路由 " + (r.Path ?? "（无路径）"), "", "external-group", StageRoute,
-                $"包住 {r.Children.Count} 个子路由：{string.Join("、", children.Take(5))}" + (children.Count > 5 ? "…" : "") + $"（{Where(f, r.Pos)}）", Cap(kids, StageRoute), f.Path, f.LineOf(r.Pos));
+            var children = r.Children.Select(c => c.Path ?? L("（index）", "(index)")).ToList();
+            return Node(null, L("布局路由 ", "Layout route ") + (r.Path ?? L("（无路径）", "(no path)")), "", "external-group", StageRoute,
+                L($"包住 {r.Children.Count} 个子路由：{string.Join("、", children.Take(5))}", $"wraps {Plural(r.Children.Count, "child route", "child routes")}: {string.Join(", ", children.Take(5))}") + (children.Count > 5 ? "…" : "") + L($"（{Where(f, r.Pos)}）", $" ({Where(f, r.Pos)})"), Cap(kids, StageRoute), f.Path, f.LineOf(r.Pos));
         }
 
         // ================= 请求封装与收尾 =================
@@ -335,7 +335,7 @@ public static partial class FrontendFrameworkFlow
                     if (close > 0 && Regex.Match(f.Raw[m.Index..close], @"\bbaseURL\s*:\s*(?<v>[^,}\r\n]+)") is { Success: true } bm) baseUrls.Add((f, m.Index, bm.Groups["v"].Value.Trim()));
                     var owner = Owner(f, m.Index, m.Index + 1);
                     var keys = close > 0 ? ObjectKeys(f, m.Index + m.Length, close) : null;
-                    instances.Add(Row(StageRequest, owner, owner is null ? "axios.create" : Label(owner), $"axios 实例（{Where(f, m.Index)}）" + (keys is null ? "" : "：" + keys), [], f.Path, f.LineOf(m.Index), owner is null ? "external:axios.create" : null));
+                    instances.Add(Row(StageRequest, owner, owner is null ? "axios.create" : Label(owner), L($"axios 实例（{Where(f, m.Index)}）", $"axios instance ({Where(f, m.Index)})") + (keys is null ? "" : L("：", ": ") + keys), [], f.Path, f.LineOf(m.Index), owner is null ? "external:axios.create" : null));
                 }
                 if (gen is not null || ServerOnly(f.Path)) continue;
                 foreach (Match m in InterceptorUse().Matches(f.S))
@@ -352,23 +352,23 @@ public static partial class FrontendFrameworkFlow
                         var (s, e) = args.Count > 0 ? args[0] : (open + 1, close);
                         var headers = HeadersSet(f.Raw[s..e]);
                         requestInterceptors.Add(Node(null, $"{recv}.interceptors.request.use", "interceptors.request.use", "external-group", StageRequest,
-                            $"请求拦截器（{Where(f, m.Index)}）：每个请求发出前执行" + (headers is null ? "" : "；" + headers), Cap(SpanRows(f, s, e, StageRequest), StageRequest), f.Path, f.LineOf(m.Index)));
+                            L($"请求拦截器（{Where(f, m.Index)}）：每个请求发出前执行", $"Request interceptor ({Where(f, m.Index)}): runs before every request is sent") + (headers is null ? "" : L("；", "; ") + headers), Cap(SpanRows(f, s, e, StageRequest), StageRequest), f.Path, f.LineOf(m.Index)));
                     }
                     else
                     {
                         if (args.Count > 0)
                         {
                             var (s, e) = args[0];
-                            var unwrap = Regex.IsMatch(f.Raw[s..e], @"(?:return\s+|=>\s*)\w+\s*\.\s*data\b") ? "；成功时把 response.data 拆出来给调用方" : "";
-                            AddTail($"resp-ok:{f.Path}:{m.Index}", Node(null, $"{recv}.interceptors.response.use（成功）", "interceptors.response.use", "external-group", StageTail,
-                                $"响应拦截器（{Where(f, m.Index)}）：响应回来先过这里" + unwrap, Cap(SpanRows(f, s, e, StageTail), StageTail), f.Path, f.LineOf(s)));
+                            var unwrap = Regex.IsMatch(f.Raw[s..e], @"(?:return\s+|=>\s*)\w+\s*\.\s*data\b") ? L("；成功时把 response.data 拆出来给调用方", "; on success, unwraps response.data for the caller") : "";
+                            AddTail($"resp-ok:{f.Path}:{m.Index}", Node(null, L($"{recv}.interceptors.response.use（成功）", $"{recv}.interceptors.response.use (success)"), "interceptors.response.use", "external-group", StageTail,
+                                L($"响应拦截器（{Where(f, m.Index)}）：响应回来先过这里", $"Response interceptor ({Where(f, m.Index)}): responses pass through here first") + unwrap, Cap(SpanRows(f, s, e, StageTail), StageTail), f.Path, f.LineOf(s)));
                         }
                         if (args.Count > 1)
                         {
                             var (s, e) = args[1];
                             var desc = DescribeErrors(ReachableTexts(f, s, e));
-                            AddTail($"resp-err:{f.Path}:{m.Index}", Node(null, $"{recv}.interceptors.response.use（出错）", "interceptors.response.use", "external-group", StageTail,
-                                $"响应出错时（{Where(f, s)}）" + (desc is null ? "：统一出错处理" : "：" + desc), Cap(ExpandOnce(SpanRows(f, s, e, StageTail), StageTail), StageTail), f.Path, f.LineOf(s)));
+                            AddTail($"resp-err:{f.Path}:{m.Index}", Node(null, L($"{recv}.interceptors.response.use（出错）", $"{recv}.interceptors.response.use (error)"), "interceptors.response.use", "external-group", StageTail,
+                                L($"响应出错时（{Where(f, s)}）", $"On response error ({Where(f, s)})") + (desc is null ? L("：统一出错处理", ": centralized error handling") : L("：", ": ") + desc), Cap(ExpandOnce(SpanRows(f, s, e, StageTail), StageTail), StageTail), f.Path, f.LineOf(s)));
                         }
                     }
                 }
@@ -377,7 +377,7 @@ public static partial class FrontendFrameworkFlow
                     var where = Where(f, m.Index);
                     if (clientConfigSites.Any(c => c.StartsWith(where + " ", StringComparison.Ordinal))) continue;
                     var close = MatchAny(f.S, m.Index + m.Length - 1);
-                    clientConfigSites.Add($"{where} {m.Groups["recv"].Value}.setConfig（{(close > 0 ? ObjectKeys(f, m.Index + m.Length, close) : null) ?? "…"}）");
+                    clientConfigSites.Add(L($"{where} {m.Groups["recv"].Value}.setConfig（{(close > 0 ? ObjectKeys(f, m.Index + m.Length, close) : null) ?? "…"}）", $"{where} {m.Groups["recv"].Value}.setConfig ({(close > 0 ? ObjectKeys(f, m.Index + m.Length, close) : null) ?? "…"})"));
                 }
                 foreach (Match m in GlobalAssign().Matches(f.S))
                 {
@@ -399,12 +399,12 @@ public static partial class FrontendFrameworkFlow
                 }
                 if (at is null) { at = group[0].File; name = gen; }
                 var sym = name is null ? null : symbolsByPath[at.Path].FirstOrDefault(s => s.Name == name && s.Kind is SymbolKind.Variable or SymbolKind.Function);
-                var parts = new List<string> { $"{gen} 生成的 OpenAPI 客户端（{Where(at, pos)}）" };
-                if (generatedAxios.Count > 0) parts.Add($"底层 axios（{generatedAxios[0]} axios.create）");
-                if (clientConfigSites.Count > 0) parts.Add("全局配置：" + string.Join("；", clientConfigSites.Take(4)));
-                if (clientConfigSites.Any(c => Regex.IsMatch(c, @"\bauth\b|TOKEN"))) parts.Add("令牌：配置里的 auth / TOKEN 在每个请求发出时带上");
-                if (requestInterceptors.Count == 0) parts.Add("没有注册 interceptors");
-                requestRows.Add(Row(StageRequest, sym, $"{name ?? gen}（生成的客户端）", string.Join("；", parts), [], at.Path, at.LineOf(pos), sym is null ? name : null));
+                var parts = new List<string> { L($"{gen} 生成的 OpenAPI 客户端（{Where(at, pos)}）", $"OpenAPI client generated by {gen} ({Where(at, pos)})") };
+                if (generatedAxios.Count > 0) parts.Add(L($"底层 axios（{generatedAxios[0]} axios.create）", $"underlying axios ({generatedAxios[0]} axios.create)"));
+                if (clientConfigSites.Count > 0) parts.Add(L("全局配置：", "global config: ") + string.Join(L("；", "; "), clientConfigSites.Take(4)));
+                if (clientConfigSites.Any(c => Regex.IsMatch(c, @"\bauth\b|TOKEN"))) parts.Add(L("令牌：配置里的 auth / TOKEN 在每个请求发出时带上", "token: the auth / TOKEN in the config is attached to every request"));
+                if (requestInterceptors.Count == 0) parts.Add(L("没有注册 interceptors", "no interceptors registered"));
+                requestRows.Add(Row(StageRequest, sym, L($"{name ?? gen}（生成的客户端）", $"{name ?? gen} (generated client)"), string.Join(L("；", "; "), parts), [], at.Path, at.LineOf(pos), sym is null ? name : null));
             }
             requestRows.AddRange(instances);
             requestRows.AddRange(requestInterceptors);
@@ -418,7 +418,7 @@ public static partial class FrontendFrameworkFlow
             var serverSide = serverFiles.Count;
             if (interceptorCount.Values.Any(n => n > 1))
             {
-                notes.Add("请求封装：同一实例注册了多个请求拦截器——axios 后注册的先执行，响应拦截器按注册顺序执行");
+                notes.Add(L("请求封装：同一实例注册了多个请求拦截器——axios 后注册的先执行，响应拦截器按注册顺序执行", "Request wrapper: one instance registers several request interceptors — axios runs the last registered first; response interceptors run in registration order"));
             }
 
             // fetch 封装：被 3 处以上调用、自己调了 fetch 的函数（服务端路由与中间件里的不算）
@@ -436,20 +436,20 @@ public static partial class FrontendFrameworkFlow
                         if (e.Kind == EdgeKind.Calls && ids.Contains(e.ToId) && inside.Contains(e.FromId) && e.FromId != e.ToId)
                             (callers.TryGetValue(e.ToId, out var set) ? set : callers[e.ToId] = []).Add(e.FromId);
                     foreach (var w in wrappers.Where(w => callers.GetValueOrDefault(w.Id)?.Count >= 3).OrderByDescending(w => callers[w.Id].Count).ThenBy(w => w.QualifiedName, StringComparer.Ordinal).Take(3))
-                        requestRows.Add(Row(StageRequest, w, Label(w), $"fetch 封装（被 {callers[w.Id].Count} 处调用）", CallRows(w, StageRequest), w.Path, w.StartLine));
+                        requestRows.Add(Row(StageRequest, w, Label(w), L($"fetch 封装（被 {callers[w.Id].Count} 处调用）", $"fetch wrapper (called from {Plural(callers[w.Id].Count, "place", "places")})"), CallRows(w, StageRequest), w.Path, w.StartLine));
                 }
             }
             if (proxy is { } pn) notes.Add(pn.Note);
             if (requestRows.Count == 0 && serverSide > 0)
-                notes.Add($"没认出请求封装：页面这边没有 axios.create / interceptors / 生成的客户端 / fetch 封装；另有 {serverSide} 个 axios 实例在服务端 API 路由 / 中间件里（不在页面的请求路径上，没画）");
+                notes.Add(NoRequestWrapperPrefix + L($"：页面这边没有 axios.create / interceptors / 生成的客户端 / fetch 封装；另有 {serverSide} 个 axios 实例在服务端 API 路由 / 中间件里（不在页面的请求路径上，没画）", $": the page side has no axios.create / interceptors / generated client / fetch wrapper; {Plural(serverSide, "more axios instance lives", "more axios instances live")} in server-side API routes / middleware (not on the page request path; not drawn)"));
             if (requestRows.Count > 0)
-                notes.Add("请求封装：" + string.Join("；", new[]
+                notes.Add(L("请求封装：", "Request wrapper: ") + string.Join(L("；", "; "), new[]
                 {
-                    generated.Count > 0 ? $"生成的 OpenAPI 客户端（{string.Join("、", generated.Select(g => g.Generator).Distinct())}）" : null,
-                    instances.Count > 0 ? $"{instances.Count} 个 axios 实例" : null,
-                    requestInterceptors.Count > 0 ? $"{requestInterceptors.Count} 个请求拦截器" : "没有请求拦截器",
-                    tailIndex.Keys.Count(k => k.StartsWith("resp-", StringComparison.Ordinal)) is var r and > 0 ? $"响应拦截 {r} 段（进收尾）" : null,
-                    serverSide > 0 ? $"另有 {serverSide} 个 axios 实例在服务端 API 路由 / 中间件里（不在页面的请求路径上，没画）" : null,
+                    generated.Count > 0 ? L($"生成的 OpenAPI 客户端（{string.Join("、", generated.Select(g => g.Generator).Distinct())}）", $"generated OpenAPI client ({string.Join(", ", generated.Select(g => g.Generator).Distinct())})") : null,
+                    instances.Count > 0 ? L($"{instances.Count} 个 axios 实例", Plural(instances.Count, "axios instance", "axios instances")) : null,
+                    requestInterceptors.Count > 0 ? L($"{requestInterceptors.Count} 个请求拦截器", Plural(requestInterceptors.Count, "request interceptor", "request interceptors")) : L("没有请求拦截器", "no request interceptors"),
+                    tailIndex.Keys.Count(k => k.StartsWith("resp-", StringComparison.Ordinal)) is var r and > 0 ? L($"响应拦截 {r} 段（进收尾）", $"{Plural(r, "response interceptor", "response interceptors")} (in teardown)") : null,
+                    serverSide > 0 ? L($"另有 {serverSide} 个 axios 实例在服务端 API 路由 / 中间件里（不在页面的请求路径上，没画）", $"{Plural(serverSide, "more axios instance", "more axios instances")} in server-side API routes / middleware (not on the page request path; not drawn)") : null,
                 }.Where(x => x is not null)));
         }
 
@@ -488,15 +488,18 @@ public static partial class FrontendFrameworkFlow
                 handler ??= symbolsByPath[rf.Path].FirstOrDefault(x => x.Name is "GET" or "POST" && x.Kind is SymbolKind.Function or SymbolKind.Variable);
                 var what = new List<string>();
                 if (AxiosCreate().Match(rf.S) is { Success: true } am)
-                    what.Add($"服务端 axios 实例（{Where(rf, am.Index)}{(Owner(rf, am.Index, am.Index + 1) is { } ao ? " " + Label(ao) : "")}）转发到后端");
-                if (Regex.IsMatch(rf.Raw, @"Bearer\b")) what.Add("注入 Authorization: Bearer 令牌");
-                if (Regex.Match(rf.Raw, @"\b(\w*[Rr]efresh\w*)\s*(?:<[^>]*>)?\s*\(") is { Success: true } refresh) what.Add($"令牌过期 / 401 时刷新重试（{refresh.Groups[1].Value}）");
-                else if (rf.Raw.Contains("401", StringComparison.Ordinal)) what.Add("处理 401");
+                {
+                    var ownerLabel = Owner(rf, am.Index, am.Index + 1) is { } ao ? " " + Label(ao) : "";
+                    what.Add(L($"服务端 axios 实例（{Where(rf, am.Index)}{ownerLabel}）转发到后端", $"server-side axios instance ({Where(rf, am.Index)}{ownerLabel}) forwards to the backend"));
+                }
+                if (Regex.IsMatch(rf.Raw, @"Bearer\b")) what.Add(L("注入 Authorization: Bearer 令牌", "injects an Authorization: Bearer token"));
+                if (Regex.Match(rf.Raw, @"\b(\w*[Rr]efresh\w*)\s*(?:<[^>]*>)?\s*\(") is { Success: true } refresh) what.Add(L($"令牌过期 / 401 时刷新重试（{refresh.Groups[1].Value}）", $"refreshes and retries on token expiry / 401 ({refresh.Groups[1].Value})"));
+                else if (rf.Raw.Contains("401", StringComparison.Ordinal)) what.Add(L("处理 401", "handles 401"));
                 var where = $"{FileName(f.Path)}:{f.LineOf(pos)}";
-                var note = $"代理路由（服务端，{Rel(hit.File)}）：浏览器端 axios 的 baseURL = {(lit.Success ? "" : expr + " = ")}\"{value}\"（{where}），每个请求先到这里" + (what.Count > 0 ? "；" + string.Join("、", what) : "");
+                var note = L($"代理路由（服务端，{Rel(hit.File)}）：浏览器端 axios 的 baseURL = {(lit.Success ? "" : expr + " = ")}\"{value}\"（{where}），每个请求先到这里", $"Proxy route (server side, {Rel(hit.File)}): the browser axios baseURL = {(lit.Success ? "" : expr + " = ")}\"{value}\" ({where}); every request goes here first") + (what.Count > 0 ? L("；", "; ") + string.Join(ListSep, what) : "");
                 var kids = handler is not null && handler.Kind == SymbolKind.Function ? CallRows(handler, StageRequest) : [];
-                var row = Row(StageRequest, handler, $"代理 {hit.Route}", note, kids, hit.File, handler?.StartLine ?? hit.Line);
-                return (row, hit.File, $"请求封装：浏览器端的 baseURL 指向本应用的代理路由 {hit.Route}（{FileName(hit.File)}），再由服务端转发到后端——代理这一跳画在请求封装里");
+                var row = Row(StageRequest, handler, L($"代理 {hit.Route}", $"Proxy {hit.Route}"), note, kids, hit.File, handler?.StartLine ?? hit.Line);
+                return (row, hit.File, L($"请求封装：浏览器端的 baseURL 指向本应用的代理路由 {hit.Route}（{FileName(hit.File)}），再由服务端转发到后端——代理这一跳画在请求封装里", $"Request wrapper: the browser baseURL points at this app's proxy route {hit.Route} ({FileName(hit.File)}), and the server forwards to the backend — the proxy hop is drawn in the request wrapper"));
             }
             return null;
         }
@@ -508,7 +511,7 @@ public static partial class FrontendFrameworkFlow
             if (head.Contains("@hey-api", StringComparison.Ordinal)) return "@hey-api/openapi-ts";
             if (head.Contains("openapi-typescript-codegen", StringComparison.Ordinal)) return "openapi-typescript-codegen";
             if (head.Contains("orval", StringComparison.OrdinalIgnoreCase)) return "orval";
-            if (Regex.IsMatch(head, @"(auto-?generated|@generated|generated by|Code generated)", RegexOptions.IgnoreCase) && Regex.IsMatch(head + f.Path, "openapi|swagger", RegexOptions.IgnoreCase)) return "OpenAPI 生成器";
+            if (Regex.IsMatch(head, @"(auto-?generated|@generated|generated by|Code generated)", RegexOptions.IgnoreCase) && Regex.IsMatch(head + f.Path, "openapi|swagger", RegexOptions.IgnoreCase)) return L("OpenAPI 生成器", "OpenAPI generator");
             return null;
         }
 
@@ -543,7 +546,7 @@ public static partial class FrontendFrameworkFlow
             foreach (Match m in Regex.Matches(raw, @"headers\s*\.\s*set\s*\(\s*[""'`](?<q>[^""'`]+)")) names.Add(m.Groups["q"].Value);
             var token = Regex.IsMatch(raw, @"Bearer|[Aa]uthorization|[Tt]oken");
             if (names.Count == 0 && !token) return null;
-            return (names.Count > 0 ? "设置请求头 " + string.Join("、", names.Distinct().Take(6)) : "") + (token && !names.Any(n => n.Contains("uthorization", StringComparison.Ordinal)) ? (names.Count > 0 ? "，" : "") + "带上令牌" : "");
+            return (names.Count > 0 ? L("设置请求头 ", "sets headers ") + string.Join(ListSep, names.Distinct().Take(6)) : "") + (token && !names.Any(n => n.Contains("uthorization", StringComparison.Ordinal)) ? (names.Count > 0 ? L("，", ", ") : "") + L("带上令牌", "attaches the token") : "");
         }
 
         // ---- TanStack Query 的 QueryClient ----
@@ -556,7 +559,7 @@ public static partial class FrontendFrameworkFlow
             var (qf, pos) = site.Value;
             var open = qf.S.IndexOf('(', pos);
             var close = open < 0 ? -1 : MatchAny(qf.S, open);
-            var parts = new List<string> { $"查询客户端（{Where(qf, pos)}）" };
+            var parts = new List<string> { L($"查询客户端（{Where(qf, pos)}）", $"Query client ({Where(qf, pos)})") };
             var handlers = new List<(string What, int Start, int End)>();
             var brace = open < 0 ? -1 : FrameworkFlowBuilder.SkipWs(qf.S, open + 1);
             if (close > 0 && brace < close && qf.S[brace] == '{' && MatchAny(qf.S, brace) is var bc and > 0)
@@ -577,17 +580,17 @@ public static partial class FrontendFrameworkFlow
                         {
                             if (qf.S[ss] != '{') continue;
                             var opts = ObjectEntries(qf.S, ss, MatchAny(qf.S, ss));
-                            parts.Add($"defaultOptions.{sub}：{string.Join("、", opts.Select(o => o.Key + (o.Key == "retry" && Regex.IsMatch(qf.S[o.ValueStart..o.ValueEnd], @"=>|function") ? "（自定义函数）" : "")).Take(8))}");
+                            parts.Add($"defaultOptions.{sub}{L("：", ": ")}{string.Join(ListSep, opts.Select(o => o.Key + (o.Key == "retry" && Regex.IsMatch(qf.S[o.ValueStart..o.ValueEnd], @"=>|function") ? L("（自定义函数）", " (custom function)") : "")).Take(8))}");
                             foreach (var h in opts.Where(o => o.Key == "onError"))
                                 handlers.Add(($"defaultOptions.{sub}.onError", h.ValueStart, h.ValueEnd));
                         }
                     }
                 }
             }
-            if (handlers.Count > 0) parts.Add($"{string.Join("、", handlers.Select(h => h.What).Distinct())} 见收尾");
+            if (handlers.Count > 0) parts.Add(L($"{string.Join("、", handlers.Select(h => h.What).Distinct())} 见收尾", $"{string.Join(", ", handlers.Select(h => h.What).Distinct())}: see teardown"));
             foreach (var h in handlers) AddQueryErrorTail(qf, h.What, h.Start, h.End);
             var owner = Owner(qf, pos, pos + 1);
-            return [Row(StageProvider, owner, owner is null ? "new QueryClient" : $"{Label(owner)} → new QueryClient", string.Join("；", parts), [], qf.Path, qf.LineOf(pos), owner is null ? "external:@tanstack/react-query.QueryClient" : null)];
+            return [Row(StageProvider, owner, owner is null ? "new QueryClient" : $"{Label(owner)} → new QueryClient", string.Join(L("；", "; "), parts), [], qf.Path, qf.LineOf(pos), owner is null ? "external:@tanstack/react-query.QueryClient" : null)];
         }
 
         private (JsFile File, int Pos)? FindQueryClient(JsFile f, string? ident)
@@ -624,7 +627,7 @@ public static partial class FrontendFrameworkFlow
         {
             var text = f.S[s..e].Trim();
             MapSymbol? fn = Regex.IsMatch(text, @"^[A-Za-z_$][\w$]*$") ? Resolve(f, text) : null;
-            var trigger = what.StartsWith("Mutation", StringComparison.Ordinal) ? "提交（mutation）出错时" : "查询出错时";
+            var trigger = what.StartsWith("Mutation", StringComparison.Ordinal) ? L("提交（mutation）出错时", "on mutation error") : QueryErrorTrigger;
             if (fn is not null && File(fn.Path) is { } ff)
             {
                 var key = "qc:" + fn.Id;
@@ -632,16 +635,16 @@ public static partial class FrontendFrameworkFlow
                 {
                     var old = tailRows[at];
                     var whats = old.Label[..old.Label.IndexOf(" → ", StringComparison.Ordinal)];
-                    tailRows[at] = old with { Label = $"{whats} / {what} → {fn.Name}", Note = old.Note?.Replace("查询出错时", "查询 / 提交（mutation）出错时", StringComparison.Ordinal) };
+                    tailRows[at] = old with { Label = $"{whats} / {what} → {fn.Name}", Note = old.Note?.Replace(QueryErrorTrigger, L("查询 / 提交（mutation）出错时", "on query / mutation error"), StringComparison.Ordinal) };
                     return;
                 }
                 var (fs, fe) = ff.Span(fn.StartLine, fn.EndLine);
                 var desc = DescribeErrors(ReachableTexts(ff, fs, fe));
-                AddTail(key, Row(StageTail, fn, $"{what} → {fn.Name}", $"TanStack Query 全局：{trigger}" + (desc is null ? "" : "：" + desc), ExpandOnce(CallRows(fn, StageTail), StageTail), fn.Path, fn.StartLine));
+                AddTail(key, Row(StageTail, fn, $"{what} → {fn.Name}", L($"TanStack Query 全局：{trigger}", $"TanStack Query global: {trigger}") + (desc is null ? "" : L("：", ": ") + desc), ExpandOnce(CallRows(fn, StageTail), StageTail), fn.Path, fn.StartLine));
                 return;
             }
             var d = DescribeErrors(ReachableTexts(f, s, e));
-            AddTail($"qc:{f.Path}:{s}", Node(null, what, what, "external-group", StageTail, $"TanStack Query 全局：{trigger}" + (d is null ? "" : "：" + d),
+            AddTail($"qc:{f.Path}:{s}", Node(null, what, what, "external-group", StageTail, L($"TanStack Query 全局：{trigger}", $"TanStack Query global: {trigger}") + (d is null ? "" : L("：", ": ") + d),
                 Cap(ExpandOnce(SpanRows(f, s, e, StageTail), StageTail), StageTail), f.Path, f.LineOf(s)));
         }
 
@@ -679,7 +682,8 @@ public static partial class FrontendFrameworkFlow
                     if (f.S[m.Index] != ' ') hits.Add((m.Index, Regex.Replace(m.Groups["how"].Value, @"\s+", " "), m.Groups["v"].Value, EnclosingIfs(f, s, m.Index)));
             if (hits.Count == 0) return null;
             var best = hits.OrderBy(h => LoginTarget().IsMatch(h.Target) ? 0 : 1).ThenBy(h => h.Conds.Count).ThenBy(h => h.Pos).First();
-            return "守卫：" + (best.Conds.Count == 0 ? "" : string.Join(" 且 ", best.Conds) + " 时") + $"跳 {best.Target}（{best.How}）";
+            return L("守卫：" + (best.Conds.Count == 0 ? "" : string.Join(" 且 ", best.Conds) + " 时") + $"跳 {best.Target}（{best.How}）",
+                $"Guard: redirects to {best.Target} ({best.How})" + (best.Conds.Count == 0 ? "" : " when " + string.Join(" and ", best.Conds)));
         }
 
         /// <summary>pos 处是函数声明的名字（function noCacheRedirect(…)），不是调用。</summary>
@@ -707,17 +711,17 @@ public static partial class FrontendFrameworkFlow
             var all = string.Join("\n", texts);
             var statuses = Regex.Matches(all, @"(?<![\w.])(401|403|404|419|429|500|502|503)(?![\w.])").Select(m => m.Value).Distinct().ToList();
             var actions = new List<string>();
-            foreach (Match m in Regex.Matches(all, @"removeItem\s*\(\s*[""'`](?<k>[^""'`]+)")) actions.Add("清 " + m.Groups["k"].Value);
+            foreach (Match m in Regex.Matches(all, @"removeItem\s*\(\s*[""'`](?<k>[^""'`]+)")) actions.Add(L("清 ", "clear ") + m.Groups["k"].Value);
             foreach (var rx in RedirectPatterns)
                 foreach (Match m in rx.Matches(all))
-                    if (m.Groups["t"].Success) actions.Add("跳 " + m.Groups["t"].Value);
-            if (Regex.IsMatch(all, @"\bsignOut\s*\(")) actions.Add("登出");
-            if (Regex.IsMatch(all, @"\brefresh\w*\s*\(", RegexOptions.IgnoreCase)) actions.Add("刷新令牌");
-            foreach (Match m in Regex.Matches(all, @"dispatchEvent\s*\(\s*new\s+(?:Custom)?Event\s*\(\s*[""'`](?<e>[^""'`]+)")) actions.Add($"广播事件 {m.Groups["e"].Value}");
-            if (Regex.IsMatch(all, @"\btoast\b|enqueueSnackbar|message\s*\.\s*error|notification\s*\.\s*error|show\w*Error\w*\s*\(|\bnotify\w*\s*\(")) actions.Add("弹出错提示");
-            if (Regex.IsMatch(all, @"Promise\s*\.\s*reject|\bthrow\b")) actions.Add("再抛给调用方");
+                    if (m.Groups["t"].Success) actions.Add(L("跳 ", "redirect to ") + m.Groups["t"].Value);
+            if (Regex.IsMatch(all, @"\bsignOut\s*\(")) actions.Add(L("登出", "sign out"));
+            if (Regex.IsMatch(all, @"\brefresh\w*\s*\(", RegexOptions.IgnoreCase)) actions.Add(L("刷新令牌", "refresh token"));
+            foreach (Match m in Regex.Matches(all, @"dispatchEvent\s*\(\s*new\s+(?:Custom)?Event\s*\(\s*[""'`](?<e>[^""'`]+)")) actions.Add(L($"广播事件 {m.Groups["e"].Value}", $"broadcast event {m.Groups["e"].Value}"));
+            if (Regex.IsMatch(all, @"\btoast\b|enqueueSnackbar|message\s*\.\s*error|notification\s*\.\s*error|show\w*Error\w*\s*\(|\bnotify\w*\s*\(")) actions.Add(L("弹出错提示", "show an error toast"));
+            if (Regex.IsMatch(all, @"Promise\s*\.\s*reject|\bthrow\b")) actions.Add(RethrowAction);
             if (statuses.Count == 0 && actions.Count == 0) return null;
-            return (statuses.Count > 0 ? "涉及 " + string.Join("/", statuses) : "") + (actions.Count > 0 ? (statuses.Count > 0 ? "；" : "") + string.Join("、", actions.Distinct()) : "");
+            return (statuses.Count > 0 ? L("涉及 ", "involves ") + string.Join("/", statuses) : "") + (actions.Count > 0 ? (statuses.Count > 0 ? L("；", "; ") : "") + string.Join(ListSep, actions.Distinct()) : "");
         }
     }
 }

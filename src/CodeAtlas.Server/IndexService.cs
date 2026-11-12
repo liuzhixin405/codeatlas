@@ -26,6 +26,8 @@ public sealed class IndexService : IDisposable, IAsyncDisposable
     private volatile bool _stopping;
     private Task? _disposeTask;
     private Task? _indexTask;
+    private Task? _reconcileTask;
+    private DiskDrift? _lastDrift;
     private IndexProgress? _progress;
     private IndexReportDto? _lastReport;
     private string? _lastError;
@@ -89,15 +91,15 @@ public sealed class IndexService : IDisposable, IAsyncDisposable
                     var post = new PostIndexSteps(roots, _writeDb, timings);
                     // 容器图事实：文件与文本扫描；失败只记错误不影响索引
                     try { lock (_stateLock) _progress = new IndexProgress("arch", 0, 0, null); timings.Measure("arch", post.Arch); }
-                    catch (Exception ex) { lock (_stateLock) _lastError = "容器图扫描失败：" + ex.Message; }
+                    catch (Exception ex) { lock (_stateLock) _lastError = L("容器图扫描失败：", "Container graph scan failed: ") + ex.Message; }
                     ct.ThrowIfCancellationRequested();
                     // git 行为统计：没有 git 时 Error 里写原因，DSM 的叠加层为空
                     try { lock (_stateLock) _progress = new IndexProgress("git", 0, 0, null); timings.Measure("git", post.Git); }
-                    catch (Exception ex) { lock (_stateLock) _lastError = "git 统计失败：" + ex.Message; }
+                    catch (Exception ex) { lock (_stateLock) _lastError = L("git 统计失败：", "git statistics failed: ") + ex.Message; }
                     ct.ThrowIfCancellationRequested();
                     // 入口与路由匹配：靠索引里的符号和边，所以放在最后；失败同样只记错误
                     try { lock (_stateLock) _progress = new IndexProgress("entries", 0, 0, null); timings.Measure("entries", post.Entries); }
-                    catch (Exception ex) { lock (_stateLock) _lastError = "入口识别失败：" + ex.Message; }
+                    catch (Exception ex) { lock (_stateLock) _lastError = L("入口识别失败：", "Entry discovery failed: ") + ex.Message; }
                     lock (_stateLock) _lastReport = report with { Timings = timings.Items };
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
@@ -130,9 +132,9 @@ public sealed class IndexService : IDisposable, IAsyncDisposable
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         var worker = RoslynRunner.FindWorker();
-        if (worker is null) return new RoslynReportDto(0, 0, 0, 0, 0, 0, 0, 0, $"没有找到 {RoslynRunner.WorkerName}（应与 codeatlas 同目录），跳过 Roslyn 精确语义。");
+        if (worker is null) return new RoslynReportDto(0, 0, 0, 0, 0, 0, 0, 0, L($"没有找到 {RoslynRunner.WorkerName}（应与 codeatlas 同目录），跳过 Roslyn 精确语义。", $"{RoslynRunner.WorkerName} not found (it should be next to codeatlas); skipping precise Roslyn semantics."));
         var solutions = RoslynRunner.DiscoverSolutions(roots);
-        if (solutions.Count == 0) return new RoslynReportDto(0, 0, 0, 0, 0, 0, 0, 0, "仓库里没有找到 .sln/.slnx，跳过 Roslyn 精确语义。");
+        if (solutions.Count == 0) return new RoslynReportDto(0, 0, 0, 0, 0, 0, 0, 0, L("仓库里没有找到 .sln/.slnx，跳过 Roslyn 精确语义。", "No .sln/.slnx found in the repository; skipping precise Roslyn semantics."));
         if (await RoslynRunner.ProbeAsync(worker, ct) is { } unavailable) return new RoslynReportDto(0, 0, 0, 0, 0, 0, 0, 0, unavailable, Unavailable: true);
         var pending = full ? null : new IndexReader(_writeDb).GetRoslynPendingFiles();
         if (pending is { Count: 0 }) return new RoslynReportDto(0, 0, 0, 0, 0, 0, 0, 0, null, Incremental: true);
@@ -144,7 +146,7 @@ public sealed class IndexService : IDisposable, IAsyncDisposable
                 p => { lock (_stateLock) _progress = new IndexProgress("roslyn", p.Done, p.Total, p.Current); },
                 null, ct, pendingFiles: pending);
             timings.AddRange(r.Timings ?? []);
-            var partial = r.FailedSolutions is { Count: > 0 } failed ? $"{failed.Count}/{r.Solutions} 个解决方案失败：" + string.Join("；", failed) : null;
+            var partial = r.FailedSolutions is { Count: > 0 } failed ? L($"{failed.Count}/{r.Solutions} 个解决方案失败：", $"{failed.Count}/{r.Solutions} solutions failed: ") + string.Join(L("；", "; "), failed) : null;
             return new RoslynReportDto(r.Files, r.FilesSkipped, r.SymbolsMerged, r.SymbolsAdded, r.Edges, r.DiRegistrations, r.Errors, sw.Elapsed.TotalSeconds, partial,
                 Incremental: r.Incremental);
         }
@@ -155,22 +157,57 @@ public sealed class IndexService : IDisposable, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// 启动对账：服务没跑的时候（扩展没开、AI 助手直接写盘、git pull / 切分支）磁盘上的改动，起来后和索引对一次账（<see cref="DiskDrift"/>，只比 stat），
+    /// 有差异才排一次增量索引（判定与增量索引相同，没变的文件不读）。对账期间 Status 报 running（phase = reconcile），
+    /// 扩展据此等它结束再刷新视图；但不占索引槽位：这期间 POST /api/index 照常能开始，对账发现差异时那次索引已经覆盖了，不再重复。
+    /// 已在对账或索引返回 false。
+    /// </summary>
+    public bool TryStartReconcile()
+    {
+        lock (_stateLock)
+        {
+            if (_stopping || _indexTask is { IsCompleted: false } || _reconcileTask is { IsCompleted: false }) return false;
+            var roots = _options.LoadRoots();
+            _reconcileTask = Task.Run(() =>
+            {
+                try
+                {
+                    var existing = Read(r => r.GetAllFiles());
+                    var drift = DiskDrift.Detect(roots, existing, _adapters);
+                    lock (_stateLock) _lastDrift = drift;
+                    if (drift.Count > 0) TryStartIndex(false);
+                }
+                catch (ObjectDisposedException) { /* 服务正在停 */ }
+                catch (Exception ex) { lock (_stateLock) _lastError = L("启动对账失败：", "Startup reconciliation failed: ") + ex.Message; }
+            });
+            return true;
+        }
+    }
+
+    /// <summary>最近一次启动对账的结果；没做过为 null。</summary>
+    public DiskDrift? LastDrift { get { lock (_stateLock) return _lastDrift; } }
+
     public IndexStatusDto Status()
     {
         lock (_stateLock)
         {
-            var running = _indexTask is { IsCompleted: false };
-            var p = running ? _progress : null;
-            return new IndexStatusDto(running, p?.Phase, p?.Done ?? 0, p?.Total ?? 0, _lastReport, _lastError);
+            var indexing = _indexTask is { IsCompleted: false };
+            var reconciling = _reconcileTask is { IsCompleted: false };
+            var p = indexing ? _progress : reconciling ? new IndexProgress("reconcile", 0, 0, null) : null;
+            return new IndexStatusDto(indexing || reconciling, p?.Phase, p?.Done ?? 0, p?.Total ?? 0, _lastReport, _lastError);
         }
     }
 
-    /// <summary>测试用：等待当前索引结束。</summary>
-    public Task WaitForIndexAsync()
+    /// <summary>测试用：等待当前的对账与索引结束（对账可能接着开一次索引，所以先等对账）。</summary>
+    public async Task WaitForIndexAsync()
     {
+        Task? r;
+        lock (_stateLock) r = _reconcileTask;
+        if (r is not null) await r;
         Task? t;
         lock (_stateLock) t = _indexTask;
-        return t ?? Task.CompletedTask;
+        if (t is not null) await t;
     }
 
     public IReadOnlyList<SymbolDto> Search(string query, int limit) => Read(r =>
@@ -217,16 +254,46 @@ public sealed class IndexService : IDisposable, IAsyncDisposable
     });
 
     /// <summary>调用大纲：这个方法按源码顺序的一层调用（见 OutlineBuilder）。只查它自己的出边与相关符号，不走整库缓存。符号不存在返回 null。</summary>
-    public OutlineDto? Outline(long id, OutlineOptions options) => Read(_ => OutlineQuery.Build(_readDb, id, options));
+    public OutlineDto? Outline(long id, OutlineOptions options) =>
+        Read(_ => OutlineQuery.Build(_readDb, id, options)) is { } o ? o with { StaleFiles = StaleOf(StaleFileCheck.PathsOf(o)) } : null;
 
     /// <summary>模块关系：以这个符号所属的类（或模块）为中心，类与类之间的依赖（见 RelationsBuilder）。按需查，不走整库缓存。符号不存在返回 null。</summary>
-    public RelationsDto? Relations(long id, RelationsOptions options) => Read(_ => RelationsQuery.Build(_readDb, id, options));
+    public RelationsDto? Relations(long id, RelationsOptions options) =>
+        Read(_ => RelationsQuery.Build(_readDb, id, options)) is { } d ? d with { StaleFiles = StaleOf(StaleFileCheck.PathsOf(d)) } : null;
 
     /// <summary>快速跳转：文件里每个方法的调用计数（见 LensQuery）。path 相对仓库根或绝对路径；不在索引里返回空 Symbols。</summary>
     public FileLensDto Lens(string path) => Read(_ => LensQuery.Build(_readDb, Roots, path, NormalizeToRelative(path)));
 
     /// <summary>影响范围：这个符号的直接调用方，entries=true 时另附往上能走到的入口（见 ImpactBuilder）。按需查入边，不走整库缓存。符号不存在返回 null。</summary>
-    public ImpactDto? Impact(long id, ImpactOptions options) => Read(_ => ImpactQuery.Build(_readDb, id, options));
+    public ImpactDto? Impact(long id, ImpactOptions options) =>
+        Read(_ => ImpactQuery.Build(_readDb, id, options)) is { } d ? d with { StaleFiles = StaleOf(StaleFileCheck.PathsOf(d)) } : null;
+
+    /// <summary>
+    /// 视图涉及的文件里哪些在上次索引后改过（见 <see cref="StaleFileCheck"/>）：读锁里只取这些文件的记录，stat / 哈希在锁外做，不挡别的查询。
+    /// 结果不进任何缓存（缓存的是索引结果，过期与否每次现查）。
+    /// </summary>
+    private IReadOnlyList<string>? StaleOf(IEnumerable<string?> paths)
+    {
+        var distinct = paths.OfType<string>().Where(p => p.Length > 0 && p != IndexWriter.ExternalFilePath)
+            .Distinct(StringComparer.Ordinal).Take(StaleFileCheck.MaxPaths).ToList();
+        if (distinct.Count == 0) return null;
+        var records = Read(r => distinct.Select(r.GetFile).OfType<FileRecord>().ToList());
+        return StaleFileCheck.Check(records, Roots.Main);
+    }
+
+    private FlowDto? WithStale(FlowDto? flow) => flow is null ? null : flow with { StaleFiles = StaleOf(StaleFileCheck.PathsOf(flow)) };
+
+    /// <summary>
+    /// 改动影响分析（GET /api/affected）：先在读锁外跑 git（可能要几百毫秒），再在读锁下按索引分析（见 AffectedQuery）。git 不可用 / base 不存在时 Error 非空。
+    /// </summary>
+    public (AffectedDto? Result, string? Error) Affected(string? baseRef, AffectedOptions options)
+    {
+        var b = string.IsNullOrWhiteSpace(baseRef) ? AffectedGit.DefaultBase : baseRef.Trim();
+        var root = Roots.Main;
+        var git = AffectedGit.Collect(root, b);
+        if (git.Error is not null) return (null, git.Error);
+        return (Read(_ => AffectedQuery.Build(_readDb, root, git.Changes, "git", b, git.MergeBase, options)), null);
+    }
 
     private readonly Dictionary<string, MapDto> _mapCache = new(StringComparer.Ordinal);
 
@@ -301,7 +368,7 @@ public sealed class IndexService : IDisposable, IAsyncDisposable
             var edges = model.Edges.Select(e => new ArchEdgeDto(e.FromKey, e.ToKey, e.Protocol, e.Confidence, e.Source.ToString().ToLowerInvariant(), e.Evidence, e.ConfigKey, e.Url)).ToList();
             string? note = null;
             if (nodes.Count == 0)
-                note = _readDb.Scalar<long>("SELECT COUNT(*) FROM files") == 0 ? "还没有索引" : "没有发现可部署单元（可执行项目、前端应用）：这个仓库只有类库，显示整库的模块依赖（组件矩阵）";
+                note = _readDb.Scalar<long>("SELECT COUNT(*) FROM files") == 0 ? L("还没有索引", "Not indexed yet") : L("没有发现可部署单元（可执行项目、前端应用）：这个仓库只有类库，显示整库的模块依赖（组件矩阵）", "No deployable units found (executable projects, frontend apps): this repository only has libraries, so the module dependencies of the whole repository are shown (component matrix)");
             return _archCache = new ArchDto(nodes, edges, model.Conflicts, note);
         }
     });
@@ -339,7 +406,7 @@ public sealed class IndexService : IDisposable, IAsyncDisposable
             var (symbols, edges) = Data(r);
             var git = GitStorage.Read(_readDb);
             var dsm = DsmBuilder.Build(symbols, edges, container, root, git.Files.Count > 0 ? git : null, rules: DsmBuilder.LoadRules(_readDb));
-            if (git.Files.Count == 0 && git.Error is not null) dsm = dsm with { Note = (dsm.Note is null ? "" : dsm.Note + "；") + "git 统计不可用：" + git.Error };
+            if (git.Files.Count == 0 && git.Error is not null) dsm = dsm with { Note = (dsm.Note is null ? "" : dsm.Note + L("；", "; ")) + L("git 统计不可用：", "git statistics unavailable: ") + git.Error };
             return _dsmCache[(containerKey, root)] = dsm;
         }
     });
@@ -385,7 +452,7 @@ public sealed class IndexService : IDisposable, IAsyncDisposable
     /// 同一符号上挂着多条路由（lambda 处理器留在外层方法上、健康检查端点）时，route / httpMethod 指定哪一条；不给取第一条。
     /// 入口落在外层方法上时根节点只取那段路由自己行范围里的调用（见 <see cref="EntryDiscovery.FlowEdges"/>），不把同一方法里别的路由混进来。
     /// </summary>
-    public FlowDto? Flow(long symbolId, int? depth, string? route = null, string? httpMethod = null) => Read(r =>
+    public FlowDto? Flow(long symbolId, int? depth, string? route = null, string? httpMethod = null) => WithStale(Read(r =>
     {
         var maxDepth = Math.Clamp(depth ?? FlowBuilder.DefaultMaxDepth, 1, 20);
         var cacheable = route is null && httpMethod is null; // 指定路由的不进缓存（缓存键只有符号）
@@ -404,13 +471,13 @@ public sealed class IndexService : IDisposable, IAsyncDisposable
             var result = InjectPipeline(r, flow, containers);
             return cacheable ? _flowCache[(symbolId, maxDepth, false)] = result : result;
         }
-    });
+    }));
 
     /// <summary>
     /// 从任意符号出发的时序树（见 <see cref="Server.SymbolFlow"/>）：入口与 <see cref="Flow"/> 结果相同，方法临时构造入口，类型取构造函数，
     /// 不可执行的符号给只有根的流程并在 Note 里说明。符号不存在返回 null。depth 同 Flow。
     /// </summary>
-    public FlowDto? SymbolFlow(long symbolId, int? depth) => Read(r =>
+    public FlowDto? SymbolFlow(long symbolId, int? depth) => WithStale(Read(r =>
     {
         var maxDepth = Math.Clamp(depth ?? FlowBuilder.DefaultMaxDepth, 1, 20);
         if (r.GetSymbol(symbolId) is null) return null; // 不缓存：索引后可能出现
@@ -427,7 +494,21 @@ public sealed class IndexService : IDisposable, IAsyncDisposable
             var flow = Server.SymbolFlow.Build(symbols, edges, symbol, containers, matches, entries, maxDepth, arch.Outbound, externals, RepoContainer);
             return _flowCache[(symbolId, maxDepth, true)] = InjectPipeline(r, flow, containers);
         }
-    });
+    }));
+
+    /// <summary>
+    /// 两点间调用路径（见 <see cref="CallPathFinder"/>）：从 fromId 到 toId，最多 depth 步（默认 / 上限见 CallPathFinder）、最多 max 条。
+    /// 任一端符号不存在返回 null。不缓存：每次按整库边现算，边表已在内存（与时序图共用 <see cref="Data"/>）。
+    /// </summary>
+    public CallPathsDto? CallPaths(long fromId, long toId, int? depth, int? max) => Read(r =>
+    {
+        lock (_mapCache)
+        {
+            var (symbols, edges) = Data(r);
+            if (!symbols.Any(s => s.Id == fromId) || !symbols.Any(s => s.Id == toId)) return null;
+            return CallPathFinder.Find(symbols, edges, fromId, toId, depth ?? CallPathFinder.DefaultMaxDepth, max ?? CallPathFinder.DefaultMaxPaths);
+        }
+    }) is { } d ? d with { Flow = WithStale(d.Flow)! } : null; // 路径图复用时序树 FlowDto：过期文件挂在它上面，同调用图
 
     private ArchNode? _repoContainer;
 
@@ -506,7 +587,7 @@ public sealed class IndexService : IDisposable, IAsyncDisposable
         lock (_stateLock)
         {
             _stopping = true;
-            return new ValueTask(_disposeTask ??= DisposeCoreAsync(_indexTask ?? Task.CompletedTask));
+            return new ValueTask(_disposeTask ??= DisposeCoreAsync(Task.WhenAll(_reconcileTask ?? Task.CompletedTask, _indexTask ?? Task.CompletedTask)));
         }
     }
 

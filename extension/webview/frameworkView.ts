@@ -1,3 +1,4 @@
+import { L } from "./l10n";
 import { appendFlowHeadExtras } from "./flowView";
 import { FrameworkPanelState, handlerAction, handlerKey, isPlaceholder, stageColumnLabel, type PlaceholderKind } from "./frameworkModel";
 import { controllerListHtml, FrameworkHint, frameworkHeaderHtml, handlerEntryKey, handlerListHtml, panelPlaceholder, panelTitle } from "./frameworkHtml";
@@ -26,6 +27,10 @@ export interface FrameworkViewCallbacks {
  */
 export class FrameworkView {
   private readonly seq: SequenceDiagram;
+  /** 右栏的时序图（导出图片用）。 */
+  get sequence(): SequenceDiagram {
+    return this.seq;
+  }
   private readonly diagram: HTMLElement;
   private readonly panel: HTMLElement;
   private readonly panelTitleEl: HTMLElement;
@@ -52,7 +57,7 @@ export class FrameworkView {
     const close = document.createElement("button");
     close.className = "secondary fw-close";
     close.textContent = "×";
-    close.title = "收起清单";
+    close.title = L("收起清单", "Collapse list");
     close.onclick = () => { this.state.close(); this.renderPanel(); };
     head.append(this.panelTitleEl, close);
     this.search = document.createElement("input");

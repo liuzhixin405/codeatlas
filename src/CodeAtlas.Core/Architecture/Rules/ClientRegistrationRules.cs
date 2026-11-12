@@ -97,7 +97,7 @@ public static class AddressResolver
 public sealed class HttpClientRule : IDiscoveryRule
 {
     public string Id => "http-client";
-    public string Description => "AddHttpClient 注册的 HTTP 客户端（地址来自 BaseAddress 的字面量或配置键），以及地址取自配置对象属性的 HttpClient 调用";
+    public string Description => L("AddHttpClient 注册的 HTTP 客户端（地址来自 BaseAddress 的字面量或配置键），以及地址取自配置对象属性的 HttpClient 调用", "HTTP clients registered with AddHttpClient (address from a BaseAddress literal or config key), and HttpClient calls whose address comes from a config object property");
 
     private static readonly Regex Call = new(@"AddHttpClient(?:<[^>]+>)?\s*\(", RegexOptions.Compiled);
     private static readonly Regex NamedCall = new(@"AddHttpClient\s*\(", RegexOptions.Compiled);
@@ -253,7 +253,7 @@ public sealed class HttpClientRule : IDiscoveryRule
 public sealed class GrpcChannelRule : IDiscoveryRule
 {
     public string Id => "grpc-channel";
-    public string Description => "GrpcChannel.ForAddress 创建的通道、AddGrpcClient 注册的客户端";
+    public string Description => L("GrpcChannel.ForAddress 创建的通道、AddGrpcClient 注册的客户端", "Channels created by GrpcChannel.ForAddress and clients registered with AddGrpcClient");
 
     private static readonly Regex Call = new(@"GrpcChannel\.ForAddress\s*\((.+?)\)\s*[;,)]?", RegexOptions.Compiled);
     private static readonly Regex ClientReg = new(@"AddGrpcClient<\s*([\w.]+)\s*>", RegexOptions.Compiled);
@@ -298,7 +298,7 @@ public sealed class GrpcChannelRule : IDiscoveryRule
 public sealed class InfrastructurePatternRule : IDiscoveryRule
 {
     public string Id => "infra-pattern";
-    public string Description => "IProducer / IConsumer / IConnectionMultiplexer / DbContext / DllImport 等类型与调用模式";
+    public string Description => L("IProducer / IConsumer / IConnectionMultiplexer / DbContext / DllImport 等类型与调用模式", "Type and call patterns such as IProducer / IConsumer / IConnectionMultiplexer / DbContext / DllImport");
 
     private sealed record Pattern(Regex Regex, string SubKind, string Name, string Protocol, bool NameFromMatch = false);
 
@@ -345,8 +345,8 @@ public sealed class InfrastructurePatternRule : IDiscoveryRule
                             ? ctx.DirectEdges.FirstOrDefault(d => d.ContainerKey == c.Key && d.ExternalKey.StartsWith("external:database:", StringComparison.Ordinal))?.ExternalKey
                             : null;
                         var key = known ?? ctx.External(p.SubKind, name, evidence);
-                        if (known is not null) ctx.External(p.SubKind, ctx.Externals[known].Name, evidence);
-                        ctx.Outbound.Add(new Outbound(c.Key, Id, p.Protocol, known is not null ? ctx.Externals[known].Name : name, null, null, file, i + 1, key));
+                        if (known is not null) ctx.External(p.SubKind, ctx.CanonicalName(known), evidence);
+                        ctx.Outbound.Add(new Outbound(c.Key, Id, p.Protocol, ExternalNames.Display(known is not null ? ctx.CanonicalName(known) : name), null, null, file, i + 1, key));
                     }
                 }
             }
@@ -358,7 +358,7 @@ public sealed class InfrastructurePatternRule : IDiscoveryRule
 public sealed class LocalAssemblyRule : IDiscoveryRule
 {
     public string Id => "local-assembly";
-    public string Description => "<Reference Include> 的本地程序集（厂商 SDK）";
+    public string Description => L("<Reference Include> 的本地程序集（厂商 SDK）", "Local assemblies from <Reference Include> (vendor SDKs)");
 
     public void Apply(RuleContext ctx)
     {
@@ -390,7 +390,7 @@ public sealed class LocalAssemblyRule : IDiscoveryRule
 public sealed class FrontendHttpRule : IDiscoveryRule
 {
     public string Id => "frontend-http";
-    public string Description => "fetch / axios / HTTP 客户端（含 useXxx() / createXxx() 包装）的调用，URL 经常量解析，识别前端代理前缀";
+    public string Description => L("fetch / axios / HTTP 客户端（含 useXxx() / createXxx() 包装）的调用，URL 经常量解析，识别前端代理前缀", "fetch / axios / HTTP client calls (including useXxx() / createXxx() wrappers); URLs resolved through constants, frontend proxy prefixes recognized");
 
     private const string ProxyMark = " 经代理 ";
     private const int EvidencePaths = 20;
@@ -737,7 +737,7 @@ public sealed class FrontendHttpRule : IDiscoveryRule
     {
         if (TsConstantResolver.Alternatives(site.Value) is not { } values)
         {
-            Unresolved.Add(new UnresolvedCall(containerKey, file, site.Line, TsConstantResolver.ToResolution(site.Value).Failure ?? "无法解析"));
+            Unresolved.Add(new UnresolvedCall(containerKey, file, site.Line, TsConstantResolver.ToResolution(site.Value).Failure ?? L("无法解析", "not resolved")));
             yield break;
         }
         foreach (var value in values)
@@ -751,14 +751,14 @@ public sealed class FrontendHttpRule : IDiscoveryRule
         var path = PathOf(raw);
         if (path is null)
         {
-            Unresolved.Add(new UnresolvedCall(containerKey, file, site.Line, (OnlyHoles(raw) ? "运行时变量: " : "不是路径: ") + raw));
+            Unresolved.Add(new UnresolvedCall(containerKey, file, site.Line, (OnlyHoles(raw) ? L("运行时变量: ", "runtime variable: ") : L("不是路径: ", "not a path: ")) + raw));
             return null;
         }
         if (IsAbsolute(path)) return new Call(file, site.Line, site.Method, path, null, path, raw);
         var proxy = proxies.FirstOrDefault(p => path == p.Prefix || path.StartsWith(p.Prefix + "/", StringComparison.Ordinal))?.Prefix;
         if (proxy is null && own.Any(r => RouteMatches(r.Template, path)))
         {
-            Unresolved.Add(new UnresolvedCall(containerKey, file, site.Line, "本应用 API 路由: " + path));
+            Unresolved.Add(new UnresolvedCall(containerKey, file, site.Line, L("本应用 API 路由: ", "this app's API route: ") + path));
             return null;
         }
         var business = proxy is null ? path : path.Length == proxy.Length ? "/" : path[proxy.Length..];
@@ -798,14 +798,15 @@ public sealed class FrontendHttpRule : IDiscoveryRule
             foreach (var p in byPath.Take(EvidencePaths))
             {
                 var first = p.First();
-                ctx.External("http-service", name, new Evidence(first.File, first.Line, $"{p.Key.Method} {p.Key.BusinessPath}（{p.Count()} 处）"));
+                ctx.External("http-service", name, new Evidence(first.File, first.Line, L($"{p.Key.Method} {p.Key.BusinessPath}（{p.Count()} 处）", $"{p.Key.Method} {p.Key.BusinessPath} ({Plural(p.Count(), "call", "calls")})")));
             }
             var paths = g.Select(c => c.BusinessPath).Distinct(StringComparer.Ordinal).Count();
             var segs = g.GroupBy(c => BusinessSegment(c.BusinessPath)).OrderByDescending(s => s.Count()).ThenBy(s => s.Key, StringComparer.Ordinal).ToList();
-            var note = $"共 {g.Count()} 处调用、{paths} 条路径{(byPath.Count > EvidencePaths ? $"（证据列前 {EvidencePaths} 条）" : "")}；按业务段："
-                       + string.Join("、", segs.Take(10).Select(s => $"{s.Key} {s.Count()}")) + (segs.Count > 10 ? $" 等 {segs.Count} 段" : "");
+            var note = L($"共 {g.Count()} 处调用、{paths} 条路径{(byPath.Count > EvidencePaths ? $"（证据列前 {EvidencePaths} 条）" : "")}；按业务段：",
+                         $"{Plural(g.Count(), "call", "calls")}, {Plural(paths, "path", "paths")}{(byPath.Count > EvidencePaths ? $" (evidence lists the first {EvidencePaths})" : "")}; by business segment: ")
+                       + string.Join(ListSep, segs.Take(10).Select(s => $"{s.Key} {s.Count()}")) + (segs.Count > 10 ? L($" 等 {segs.Count} 段", $" and more ({segs.Count} segments)") : "");
             foreach (var p in g.Where(c => c.Proxy is not null).GroupBy(c => c.Proxy!).OrderBy(p => p.Key, StringComparer.Ordinal))
-                note += $"；经 {p.Key} 代理 {p.Count()} 处";
+                note += L($"；经 {p.Key} 代理 {p.Count()} 处", $"; {Plural(p.Count(), "call", "calls")} via proxy {p.Key}");
             var usedProxy = g.FirstOrDefault(c => c.Proxy is not null)?.Proxy;
             var summaryFile = usedProxy is not null ? proxies.First(p => p.Prefix == usedProxy).Evidence : g.First().File;
             ctx.External("http-service", name, new Evidence(summaryFile, null, note));

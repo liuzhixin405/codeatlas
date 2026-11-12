@@ -1,4 +1,4 @@
-import type { ArchDto, DsmDto, EntryDto, FlowDto, FrameworkFlowDto, HealthDto, IndexStatusDto, MapDto, NarrationStatusDto, NarrativeDto, NarrativeKind, NeighborDto, RelationsDto, SymbolDto } from "./types";
+import type { ArchDto, CallPathsDto, DsmDto, EntryDto, FlowDto, FrameworkFlowDto, HealthDto, IndexStatusDto, MapDto, NarrationStatusDto, NarrativeDto, NarrativeKind, NeighborDto, RelationsDto, SymbolDto } from "./types";
 
 /**
  * 网状调用图默认只取调用链上的边：调用与分发。
@@ -85,6 +85,12 @@ export class Api {
    */
   symbolFlow(symbolId: number, depth?: number): Promise<FlowDto | null> {
     return this.get<FlowDto>(`/api/symbols/${symbolId}/flow${depth !== undefined ? `?depth=${depth}` : ""}`);
+  }
+
+  /** 两点间调用路径 from → to（最多 depth 步、max 条，省略用服务端默认 8 / 10）；符号不存在或旧服务（404）返回 null。 */
+  paths(fromId: number, toId: number, depth?: number, max?: number): Promise<CallPathsDto | null> {
+    const q = `to=${toId}` + (depth !== undefined ? `&depth=${depth}` : "") + (max !== undefined ? `&max=${max}` : "");
+    return this.get<CallPathsDto>(`/api/symbols/${fromId}/paths?${q}`);
   }
 
   /** 一个容器的框架流程（中间件 → 控制器 → 分派器 → 行为链 → Handler → 收尾）；容器不存在或旧服务（404）返回 null。 */

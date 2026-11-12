@@ -7,7 +7,7 @@ namespace CodeAtlas.Core.Architecture.Rules;
 public sealed class PackageReferenceRule : IDiscoveryRule
 {
     public string Id => "package-reference";
-    public string Description => "按 NuGet 包（含 packages.config）、go.mod require、Python 依赖、Maven / Gradle 依赖与 Spring 数据源配置推断外部系统（数据库、缓存、消息、存储、遥测、邮件）";
+    public string Description => L("按 NuGet 包（含 packages.config）、go.mod require、Python 依赖、Maven / Gradle 依赖与 Spring 数据源配置推断外部系统（数据库、缓存、消息、存储、遥测、邮件）", "Infers external systems (databases, caches, messaging, storage, telemetry, mail) from NuGet packages (including packages.config), go.mod require, Python dependencies, Maven / Gradle dependencies and Spring datasource settings");
 
     /// <summary>包名前缀 → (外部系统种类, 名字, 协议)。按顺序匹配，先命中先用。</summary>
     /// <summary>
@@ -365,7 +365,7 @@ public sealed class PackageReferenceRule : IDiscoveryRule
                 }
                 else if (JavaConfigKeys.FirstOrDefault(k => SpringConfigEntry.SameKey(entry.Key, k.Key)) is { Key: not null } ck) found = (ck.SubKind, ck.Name, ck.Protocol);
                 if (found is not { } f) continue;
-                var note = $"{entry.Key}={value}" + (entry.Profile is null ? "" : $"（profile {entry.Profile}）");
+                var note = $"{entry.Key}={value}" + (entry.Profile is null ? "" : L($"（profile {entry.Profile}）", $" (profile {entry.Profile})"));
                 Add(ctx, containers, f.SubKind, f.Name, f.Protocol, new DependencyRef(note, entry.File, entry.Line));
             }
         }

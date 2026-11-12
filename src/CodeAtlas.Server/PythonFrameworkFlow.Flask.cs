@@ -41,8 +41,8 @@ public static partial class PythonFrameworkFlow
     {
         var app = apps[0];
         var appText = x.Text(app.Path)!;
-        notes.Add($"认出 Flask：{Py.Where(app.Path, appText, app.Pos)} {app.Var} = Flask(...)"
-                  + (apps.Count > 1 ? $"；另有 {apps.Count - 1} 个 Flask 实例，按第一个画" : ""));
+        notes.Add(L($"认出 Flask：{Py.Where(app.Path, appText, app.Pos)} {app.Var} = Flask(...)", $"Recognized Flask: {Py.Where(app.Path, appText, app.Pos)} {app.Var} = Flask(...)")
+                  + (apps.Count > 1 ? L($"；另有 {apps.Count - 1} 个 Flask 实例，按第一个画", $"; {Plural(apps.Count - 1, "other Flask instance", "other Flask instances")}, drawn from the first one") : ""));
 
         // ---- 蓝图与钩子（全部文件，文件顺序 + 源码顺序）----
         var blueprints = new HashSet<string>(StringComparer.Ordinal);
@@ -106,13 +106,13 @@ public static partial class PythonFrameworkFlow
             if (x.Callable(name, app.Path) is { Kind: SymbolKind.Class } cls && x.Method(cls, "__call__") is { } call)
             {
                 middlewareSymbols.Add(cls);
-                var (node, post) = SplitNode(x, call, ["app", "wsgi_app"], new Regex(@"\bself\s*\.\s*(?:app|wsgi_app)\s*\("), StageMiddleware, $"自研 WSGI 中间件（{app.Var}.wsgi_app = …，{where}）", app.Path, line);
+                var (node, post) = SplitNode(x, call, ["app", "wsgi_app"], new Regex(@"\bself\s*\.\s*(?:app|wsgi_app)\s*\("), StageMiddleware, L($"自研 WSGI 中间件（{app.Var}.wsgi_app = …，{where}）", $"Custom WSGI middleware ({app.Var}.wsgi_app = …, {where})"), app.Path, line);
                 middlewareNodes.Add(node);
                 middlewarePosts.Add(post);
             }
             else
             {
-                middlewareNodes.Add(Node(null, name, expr, "external-group", StageMiddleware, $"WSGI 中间件（框架 / 第三方，{where}）", [], app.Path, line));
+                middlewareNodes.Add(Node(null, name, expr, "external-group", StageMiddleware, L($"WSGI 中间件（框架 / 第三方，{where}）", $"WSGI middleware (framework / third-party, {where})"), [], app.Path, line));
                 middlewarePosts.Add([]);
             }
         }
@@ -123,22 +123,23 @@ public static partial class PythonFrameworkFlow
         FlowNodeDto HookNode(FlaskHook h, string actor, string note)
         {
             var where = Py.Where(h.Path, x.Text(h.Path)!, h.Pos);
-            var scope = h.AppLevel ? "" : $"；只对蓝图 {h.Receiver} 的路由";
-            if (h.Fn is null) return Node(null, h.Name, h.Name, "external-group", actor, $"{note}（{h.How}，{where}）{scope}；没找到函数定义", [], h.Path, LineAt(x.Text(h.Path)!, h.Pos));
+            var scope = h.AppLevel ? "" : L($"；只对蓝图 {h.Receiver} 的路由", $"; only for routes of blueprint {h.Receiver}");
+            var full = L($"{note}（{h.How}，{where}）{scope}", $"{note} ({h.How}, {where}){scope}");
+            if (h.Fn is null) return Node(null, h.Name, h.Name, "external-group", actor, full + L("；没找到函数定义", "; function definition not found"), [], h.Path, LineAt(x.Text(h.Path)!, h.Pos));
             (actor == StageTail ? tailSymbols : hookSymbols).Add(h.Fn);
-            return x.FunctionNode(h.Fn, actor, $"{note}（{h.How}，{where}）{scope}");
+            return x.FunctionNode(h.Fn, actor, full);
         }
         var before = hooks.Where(h => h.Kind == "before").OrderBy(h => h.AppLevel ? 0 : 1).ToList();
-        var beforeNodes = before.Select(h => HookNode(h, StageInterceptor, "before_request：返回非 None 就直接作为响应，不进视图")).ToList();
+        var beforeNodes = before.Select(h => HookNode(h, StageInterceptor, L("before_request：返回非 None 就直接作为响应，不进视图", "before_request: a non-None return value becomes the response and the view is skipped"))).ToList();
         IEnumerable<FlaskHook> Reversed(string kind) =>
             hooks.Where(h => h.Kind == kind && !h.AppLevel).Reverse().Concat(hooks.Where(h => h.Kind == kind && h.AppLevel).Reverse());
         var errorNodes = hooks.Where(h => h.Kind == "error").OrderBy(h => h.AppLevel ? 1 : 0)
-            .Select(h => HookNode(h, StageTail, $"出错时：{h.Exc ?? "?"}")).ToList();
-        var afterNodes = Reversed("after").Select(h => HookNode(h, StageTail, "after_request：拿到响应、可改写后返回（倒序）")).ToList();
-        var teardownNodes = Reversed("teardown").Select(h => HookNode(h, StageTail, "teardown_request：请求结束总会执行（出错也执行，拿到异常）")).ToList();
+            .Select(h => HookNode(h, StageTail, L($"出错时：{h.Exc ?? "?"}", $"On error: {h.Exc ?? "?"}"))).ToList();
+        var afterNodes = Reversed("after").Select(h => HookNode(h, StageTail, L("after_request：拿到响应、可改写后返回（倒序）", "after_request: receives the response and may modify it before returning (reverse order)"))).ToList();
+        var teardownNodes = Reversed("teardown").Select(h => HookNode(h, StageTail, L("teardown_request：请求结束总会执行（出错也执行，拿到异常）", "teardown_request: always runs when the request ends (also on error, receiving the exception)"))).ToList();
 
         // ---- 组装 ----
-        var routeNode = x.Http.Count > 0 ? Node(null, "路由", "", "controllers", StageController, null, [], null, null, x.Http.Count) : null;
+        var routeNode = x.Http.Count > 0 ? Node(null, L("路由", "Routes"), "", "controllers", StageController, null, [], null, null, x.Http.Count) : null;
         var rootKids = new List<FlowNodeDto>(middlewareNodes);
         rootKids.AddRange(beforeNodes);
         if (routeNode is not null) rootKids.Add(routeNode);
@@ -148,23 +149,29 @@ public static partial class PythonFrameworkFlow
         for (var i = middlewarePosts.Count - 1; i >= 0; i--) rootKids.AddRange(middlewarePosts[i]);
         foreach (var n in middlewarePosts.SelectMany(p => p)) if (n.SymbolId is { } id && x.ById.TryGetValue(id, out var ps)) tailSymbols.Add(ps);
         var rootActor = middlewareNodes.Count > 0 ? StageMiddleware : beforeNodes.Count > 0 ? StageInterceptor : StageController;
-        var root = Node(null, "HTTP 请求", "", "entry", rootActor, null, rootKids, null, null);
+        var root = Node(null, L("HTTP 请求", "HTTP request"), "", "entry", rootActor, null, rootKids, null, null);
         var stages = new List<FrameworkStageDto>();
-        if (middlewareNodes.Count > 0) stages.Add(new FrameworkStageDto(StageMiddleware, "中间件", true, x.Dtos(middlewareSymbols)));
-        if (beforeNodes.Count > 0) stages.Add(new FrameworkStageDto(StageInterceptor, "请求钩子", true, x.Dtos(hookSymbols)));
-        if (routeNode is not null) stages.Add(new FrameworkStageDto(StageController, "路由", true, x.EntrySymbols(x.Http)));
+        if (middlewareNodes.Count > 0) stages.Add(new FrameworkStageDto(StageMiddleware, L("中间件", "Middleware"), true, x.Dtos(middlewareSymbols)));
+        if (beforeNodes.Count > 0) stages.Add(new FrameworkStageDto(StageInterceptor, L("请求钩子", "Request hooks"), true, x.Dtos(hookSymbols)));
+        if (routeNode is not null) stages.Add(new FrameworkStageDto(StageController, L("路由", "Routes"), true, x.EntrySymbols(x.Http)));
         var hasTail = errorNodes.Count + afterNodes.Count + teardownNodes.Count > 0 || middlewarePosts.Any(p => p.Count > 0);
-        if (hasTail) stages.Add(new FrameworkStageDto(StageTail, "收尾", true, x.Dtos(tailSymbols)));
+        if (hasTail) stages.Add(new FrameworkStageDto(StageTail, L("收尾", "Teardown"), true, x.Dtos(tailSymbols)));
 
         // ---- Notes ----
         notes.Add(wraps.Count > 0
-            ? $"WSGI 中间件按 {app.Var}.wsgi_app = X({app.Var}.wsgi_app) 倒序排：后包的在最外层、请求先经过它"
-            : $"没有 {app.Var}.wsgi_app = X(...)：没有 WSGI 中间件");
-        if (blueprints.Count > 0) notes.Add($"{blueprints.Count} 个蓝图（{string.Join("、", blueprints.Take(6))}{(blueprints.Count > 6 ? " …" : "")}），register_blueprint {registered} 处；蓝图上的钩子只对它自己的路由");
-        if (hooks.Count == 0) notes.Add("没有 before_request / after_request / teardown_request / errorhandler 钩子");
-        else notes.Add("before_request 应用级在前、蓝图在后，各按注册顺序；收尾先是 errorhandler（蓝图的先查），再 after_request、teardown_request（蓝图在前，各自倒序）");
-        if (routeNode is null) notes.Add("没有发现 HTTP 入口（@app.route / @bp.get …）");
-        return Assemble(x.Container, "HTTP 请求", root, stages, [], notes,
-            rootActor == StageMiddleware ? "中间件" : rootActor == StageInterceptor ? "请求钩子" : "路由");
+            ? L($"WSGI 中间件按 {app.Var}.wsgi_app = X({app.Var}.wsgi_app) 倒序排：后包的在最外层、请求先经过它", $"WSGI middleware is in reverse order of {app.Var}.wsgi_app = X({app.Var}.wsgi_app): the last wrapper is outermost and sees the request first")
+            : L($"没有 {app.Var}.wsgi_app = X(...)：没有 WSGI 中间件", $"No {app.Var}.wsgi_app = X(...): no WSGI middleware"));
+        if (blueprints.Count > 0)
+        {
+            var bpList = string.Join(ListSep, blueprints.Take(6)) + (blueprints.Count > 6 ? " …" : "");
+            notes.Add(L($"{blueprints.Count} 个蓝图（{bpList}），register_blueprint {registered} 处；蓝图上的钩子只对它自己的路由",
+                $"{Plural(blueprints.Count, "blueprint", "blueprints")} ({bpList}), register_blueprint at {Plural(registered, "site", "sites")}; hooks on a blueprint only apply to its own routes"));
+        }
+        if (hooks.Count == 0) notes.Add(L("没有 before_request / after_request / teardown_request / errorhandler 钩子", "No before_request / after_request / teardown_request / errorhandler hooks"));
+        else notes.Add(L("before_request 应用级在前、蓝图在后，各按注册顺序；收尾先是 errorhandler（蓝图的先查），再 after_request、teardown_request（蓝图在前，各自倒序）",
+            "before_request: app-level first, then blueprints, each in registration order; teardown starts with errorhandler (blueprint handlers checked first), then after_request and teardown_request (blueprints first, each in reverse order)"));
+        if (routeNode is null) notes.Add(L("没有发现 HTTP 入口（@app.route / @bp.get …）", "No HTTP entry points found (@app.route / @bp.get …)"));
+        return Assemble(x.Container, L("HTTP 请求", "HTTP request"), root, stages, [], notes,
+            rootActor == StageMiddleware ? L("中间件", "Middleware") : rootActor == StageInterceptor ? L("请求钩子", "Request hooks") : L("路由", "Routes"));
     }
 }

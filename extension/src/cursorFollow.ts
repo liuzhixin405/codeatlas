@@ -3,6 +3,7 @@
 import { existsSync } from "node:fs";
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { L } from "../webview/l10n";
 import { CursorSource, resolveCursor, type CursorPos, type FollowClient } from "./outlineFollow";
 import { jumpPosition, type DocLike } from "./jumpModel";
 import type { JumpTarget } from "./outlineModel";
@@ -81,7 +82,7 @@ export async function openAt(repoRoot: string, target: JumpTarget | null, opts: 
     opts.beforeSelect?.(); // 打开文档本身可能花了一会儿，从设光标这一刻再算宽限期
     await vscode.window.showTextDocument(doc, { preserveFocus: opts.preserveFocus, preview: opts.preview, selection: new vscode.Range(position, position) });
   } catch (e) {
-    void vscode.window.showWarningMessage(`打不开 ${target.path}：${e instanceof Error ? e.message : e}`);
+    void vscode.window.showWarningMessage(L(`打不开 ${target.path}：${e instanceof Error ? e.message : e}`, `Cannot open ${target.path}: ${e instanceof Error ? e.message : e}`));
   }
 }
 
